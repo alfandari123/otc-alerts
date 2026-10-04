@@ -5,3 +5,4 @@ state.bin
 state.local.json
 *.tmp
 .state_key
+dryrun*.txt
