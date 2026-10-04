@@ -55,6 +55,20 @@ def band(p):
     return "above" if p > config.MAX_PRICE else "in"
 
 
+def avg_volume(sym, today, cache):
+    """Average daily volume of the last 20 sessions before today (cached for the day)."""
+    hit = cache.get(sym)
+    if hit and hit[0] == str(today):
+        return hit[1]
+    c = chart(sym)
+    if not c or not c["ts"] or len(c["ts"]) != len(c["vol"]):
+        return None
+    hist = [v or 0 for t, v in zip(c["ts"], c["vol"]) if datetime.fromtimestamp(t, ET).date() != today][-20:]
+    avg = sum(hist) / len(hist) if hist else None
+    cache[sym] = [str(today), avg]
+    return avg
+
+
 def volume_spike(sym, today):
     c = chart(sym)
     if not c or not c["ts"] or len(c["ts"]) != len(c["vol"]):

@@ -27,6 +27,10 @@ def fresh():
         "vol": {},              # ticker -> day of last volume alert
         "vol_last": 0,
         "boot": False,
+        "warm": [],             # sources whose existing items were already marked as seen
+        "avgvol": {},           # ticker -> [day, average daily volume]
+        "mvol_last": 0,
+        "otc_actions_last": 0,
         "health": {},           # source -> {"ok": ts, "err": str, "warned": bool}
         "runs": 0,
         "last_run": 0,

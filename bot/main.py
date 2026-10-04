@@ -12,11 +12,13 @@ import time
 
 from . import ai, config, market, rules, state, telegram
 from .net import short_err
-from .sources import finra, prnews, sec
+from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
 
-SOURCES = [("SEC", sec), ("FINRA", finra), ("PR Newswire", prnews)]
-ENRICH = {"SEC": sec.enrich, "PRN": prnews.enrich}
+SOURCES = [("OTC Markets", otcm), ("SEC", sec), ("FINRA", finra), ("PR Newswire", prnews)]
+ENRICH = {"SEC": sec.enrich, "PRN": prnews.enrich, "OTCM": otcm.enrich}
+TEMPLATED = ("FINRA", "OTCCA")       # events with a fixed message (no AI needed)
+HIGH_TIERS = ("QX", "QB")            # OTCQX/OTCQB require a bid of $0.01 or more
 TICKER_OK = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
 ICON = {"positive": "🟢", "negative": "🔴", "neutral": "⚪"}
 
@@ -101,13 +103,12 @@ def status_text(st):
         model = f" · {st['ai']['model']}" if st["ai"].get("model") else ""
         lines.append(f"שימוש ב-AI היום: {st['ai']['n']}/{config.AI_DAILY_LIMIT}{model}")
     lines += ["", "<b>מקורות:</b>"]
-    for name in ("SEC", "FINRA", "PR Newswire", "Yahoo", "AI"):
+    for name in ("OTC Markets", "SEC", "FINRA", "PR Newswire", "Yahoo", "AI"):
         h = st["health"].get(name)
         if h:
             lines.append(f"✅ {name}" if not h.get("err") else f"❌ {name} – {esc(h['err'])}")
     if not config.GEMINI_API_KEY:
         lines.append("⚪ AI – לא הוגדר מפתח")
-    lines.append("⏳ OTC Markets – יתווסף בקרוב")
     return "\n".join(lines)
 
 
@@ -198,8 +199,9 @@ def collect(run):
         try:
             got = mod.fetch(run.st)
             items += got
-            set_health(run.st, name, None)
-            log(f"{name}: {len(got)} items")
+            problems = getattr(mod, "problems", None)   # some feeds of the source failed
+            set_health(run.st, name, "; ".join(problems)[:120] if problems else None)
+            log(f"{name}: {len(got)} items" + (f" (partial: {len(problems)} feeds failed)" if problems else ""))
         except Exception as e:
             set_health(run.st, name, short_err(e))
             log(f"{name}: FAILED ({short_err(e)})")
@@ -211,22 +213,37 @@ def ai_available(st):
             and st["ai"].get("dead_day") != st["ai"]["day"])
 
 
+def _watch_hits(syms, watch):
+    """Tickers on the watchlist (a temporary 5th letter D after a reverse split still counts)."""
+    return [s for s in syms if s in watch or (len(s) == 5 and s.endswith("D") and s[:-1] in watch)]
+
+
 def evaluate(run, it):
     """Returns the alert text, or None when the item is not worth an alert."""
     st = run.st
-    watch = set(st["watch"])
-    hit = [s for s in it["syms"] if s in watch]
+    hit = _watch_hits(it["syms"], set(st["watch"]))
     rule = rules.classify(it)
-    if not hit and not rule["candidate"]:
-        return None
     syms = hit or it["syms"]
+    if not hit and not rule["candidate"]:
+        # A plain headline can hide a big story: read the full release when the stock is in the price band.
+        if it["src"] not in ("OTCM", "PRN") or not syms or it.get("tier_code") in HIGH_TIERS:
+            return None
+        if market.band(market.price(syms[:2])) != "in":
+            return None
+        ENRICH[it["src"]](it)
+        rule = rules.classify(it)
+        if not rule["candidate"]:
+            return None
     price = market.price(syms[:2]) if syms else None
     band = market.band(price)
     if not hit and band == "above" and rule["ps"] < 3:
         return None
 
-    if it["src"] == "FINRA":
-        return finra_message(it, rule, syms, price, bool(hit)) if hit or band == "in" else None
+    if it["src"] in TEMPLATED:
+        strong = rule["ps"] >= 3 and (price or 0) <= config.EVENT_ABOVE_RANGE_MAX_PRICE
+        if hit or band == "in" or strong:
+            return action_message(it, rule, syms, price, bool(hit))
+        return None
 
     res = None
     if ai_available(st):
@@ -269,8 +286,9 @@ def _head(icon, sym, price, hit):
 
 def _links(it, sym):
     links = f'<a href="{html.escape(it["url"])}">למקור</a>'
-    if sym:
-        links += f' · <a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>'
+    otc_page = f"https://www.otcmarkets.com/stock/{sym}/overview"
+    if sym and it["url"] != otc_page:
+        links += f' · <a href="{otc_page}">OTC Markets</a>'
     return f"📄 {esc(it['src_label'])} · {links}"
 
 
@@ -281,8 +299,9 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score):
         lines.append("<b>⚠️ אזהרה – חדשה שלילית למניה שלך</b>")
     cat = (res and res["category_he"]) or rule["label"] or "חדשה"
     lines.append(f"<b>{esc(cat)}</b>" + (f" · ציון {score}/10" if res else ""))
-    if it.get("company"):
-        lines.append(esc(it["company"]))
+    about = " · ".join(x for x in (it.get("company"), it.get("tier")) if x)
+    if about:
+        lines.append(esc(about))
     if res and res["summary_he"]:
         lines.append(esc(res["summary_he"]))
     else:
@@ -298,13 +317,14 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score):
     return "\n".join(lines)
 
 
-def finra_message(it, rule, syms, price, hit):
+def action_message(it, rule, syms, price, hit):
+    """Fixed-format message for FINRA / OTC Markets events."""
     pol = rule["pol"]
     sym = syms[0] if syms else ""
     lines = [_head("🔴" if pol < 0 else "🟢" if pol > 0 else "⚪", sym, price, hit)]
     if hit and pol < 0:
         lines.append("<b>⚠️ אזהרה – שינוי שלילי במניה שלך</b>")
-    lines.append(f"<b>{esc(rule['label'] or it['reason'])}</b>")
+    lines.append(f"<b>{esc(rule['label'] or it.get('reason', ''))}</b>")
     if it.get("company"):
         lines.append(esc(it["company"]))
     if it.get("text"):
@@ -313,18 +333,40 @@ def finra_message(it, rule, syms, price, hit):
     return "\n".join(lines)
 
 
+def _title_key(it):
+    """The same press release can arrive from PR Newswire and from OTC Markets."""
+    if it["src"] not in ("PRN", "OTCM") or not it["syms"]:
+        return None
+    return "t:" + it["syms"][0] + ":" + re.sub(r"[^a-z0-9]", "", it["title"].lower())[:60]
+
+
+def _mark_seen(st, it):
+    now = time.time()
+    st["seen"][it["id"]] = now
+    tk = _title_key(it)
+    if tk:
+        st["seen"][tk] = now
+
+
 def process(run, items):
     st = run.st
     new = sorted((it for it in items if it["id"] not in st["seen"]), key=lambda it: it["ts"])
+    sources = {it["src"] for it in items}
     if not st["boot"] or (not st["owner"] and not run.dry):
         # First run (or nobody to send to yet): remember what exists, without flooding old news.
         for it in new:
-            st["seen"][it["id"]] = time.time()
+            _mark_seen(st, it)
         st["boot"] = True
+        st["warm"] = sorted(set(st["warm"]) | sources)
         log(f"warm-up: {len(new)} existing items marked as seen")
         return
-    log(f"new items: {len(new)}")
+    cold = sources - set(st["warm"])   # a source new to the bot: its existing items are not news
+    log(f"new items: {len(new)}" + (f" (warm-up of {len(cold)} new sources)" if cold else ""))
     for it in new:
+        tk = _title_key(it)
+        if it["src"] in cold or (tk and tk in st["seen"]):
+            _mark_seen(st, it)
+            continue
         try:
             text = evaluate(run, it)
         except Defer:
@@ -334,21 +376,25 @@ def process(run, items):
             text = None
         if text and not run.notify(text):
             break  # Telegram is down: keep the rest for the next run
-        st["seen"][it["id"]] = time.time()
+        _mark_seen(st, it)
+    st["warm"] = sorted(set(st["warm"]) | sources)
 
 
-# ---------- Volume spikes (watchlist) ----------
+# ---------- Volume spikes ----------
+
+def _market_open(now):
+    mins = now.hour * 60 + now.minute
+    return now.weekday() < 5 and 9 * 60 + 40 <= mins <= 16 * 60 + 15
+
 
 def volume_check(run, force=False):
+    """Watchlist: today's volume vs. the 20-day average."""
     st = run.st
     now = et_now()
-    mins = now.hour * 60 + now.minute
     if not st["watch"]:
         return
     if not force:
-        if now.weekday() >= 5 or not (9 * 60 + 40 <= mins <= 16 * 60 + 15):
-            return
-        if time.time() - st["vol_last"] < config.VOLUME_CHECK_EVERY_MIN * 60:
+        if not _market_open(now) or time.time() - st["vol_last"] < config.VOLUME_CHECK_EVERY_MIN * 60:
             return
     st["vol_last"] = time.time()
     today = now.date()
@@ -367,6 +413,50 @@ def volume_check(run, force=False):
                 f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
         if run.notify(text):
             st["vol"][sym] = str(today)
+
+
+def market_volume_check(run, force=False):
+    """Whole market: the most active stocks in the price band, vs. their 20-day average."""
+    st = run.st
+    now = et_now()
+    if not force and (not _market_open(now)
+                      or time.time() - st["mvol_last"] < config.VOLUME_CHECK_EVERY_MIN * 60):
+        return
+    st["mvol_last"] = time.time()
+    try:
+        leaders = otcm.volume_leaders()
+    except Exception as e:
+        log(f"market volume: FAILED ({short_err(e)})")
+        return
+    today = now.date()
+    cache = st["avgvol"] = {s: v for s, v in st["avgvol"].items() if v[0] == str(today)}
+    watch = set(st["watch"])
+    found = []
+    for r in leaders:
+        sym, p = (r.get("symbol") or "").upper(), r.get("price") or 0
+        if not sym or sym in watch or "m:" + sym in st["vol"]:
+            continue
+        if not config.MIN_PRICE <= p <= config.MAX_PRICE or (r.get("dollarVolume") or 0) < config.VOLUME_MIN_DOLLARS_MARKET:
+            continue
+        avg = market.avg_volume(sym, today, cache)
+        if avg is None:
+            continue
+        ratio = (r.get("shareVolume") or 0) / avg if avg > 0 else float("inf")
+        if ratio >= config.VOLUME_SPIKE_X_MARKET:
+            found.append((ratio, avg, r))
+    found.sort(key=lambda x: -x[0])
+    for ratio, avg, r in found[:config.MARKET_VOLUME_MAX_ALERTS]:
+        sym = r["symbol"].upper()
+        times = f"פי {ratio:.1f} מהממוצע" if ratio != float("inf") else "בדרך כלל כמעט אין בה מסחר"
+        lines = [f"📈 <b>{sym}</b> · ${fmt_price(r['price'])} ({r.get('pctChange') or 0:+.1f}%)",
+                 "<b>ווליום חריג בשוק</b>",
+                 f"{int(r.get('shareVolume') or 0):,} מניות היום – {times} (ממוצע: {avg:,.0f})",
+                 f"מחזור: ${r.get('dollarVolume') or 0:,.0f}" + (f" · {r['tierName']}" if r.get("tierName") else "")]
+        if r.get("isCaveatEmptor"):
+            lines.append("⚠️ המניה מסומנת Caveat Emptor (גולגולת)")
+        lines.append(f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
+        if run.notify("\n".join(lines)):
+            st["vol"]["m:" + sym] = str(today)
 
 
 # ---------- Main ----------
@@ -392,6 +482,9 @@ def main():
         st["watch"] = _tickers(args.watch.split(","))
     if args.all:
         st["seen"], st["boot"] = {}, True
+        st["warm"] = ["FINRA", "OTCCA", "OTCM", "PRN", "SEC"]
+    if st["boot"] and not st["warm"]:
+        st["warm"] = ["FINRA", "PRN", "SEC"]   # sources that existed before per-source warm-up
     day = str(et_now().date())
     if st["ai"]["day"] != day:
         st["ai"].update(day=day, n=0)
@@ -404,6 +497,7 @@ def main():
         items = collect(run)
         process(run, items)
         volume_check(run, force=args.force_vol)
+        market_volume_check(run, force=args.force_vol)
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
         if ai.calls:

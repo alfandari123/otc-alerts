@@ -9,6 +9,7 @@ MAX_PRICE = 0.01
 SCORE_IN_RANGE = 7        # price inside the band
 SCORE_UNKNOWN_PRICE = 8   # price could not be fetched
 SCORE_ABOVE_RANGE = 9     # price above the band -> only very strong news
+EVENT_ABOVE_RANGE_MAX_PRICE = 0.10   # strong events (e.g. Caveat Emptor removed) above the band, up to this price
 
 # --- AI (Google Gemini, free tier). First model that works is used. ---
 GEMINI_MODELS = [
@@ -25,6 +26,11 @@ RUN_DEADLINE_SEC = 300    # stop starting new AI work after this many seconds
 VOLUME_SPIKE_X = 5            # today's volume vs. the 20-day average
 VOLUME_MIN_DOLLARS = 1000     # ignore spikes smaller than this (price x volume)
 VOLUME_CHECK_EVERY_MIN = 15
+
+# --- Volume spikes, whole market (most active stocks in the price band) ---
+VOLUME_SPIKE_X_MARKET = 10
+VOLUME_MIN_DOLLARS_MARKET = 5000
+MARKET_VOLUME_MAX_ALERTS = 5    # per check
 
 # --- Housekeeping ---
 WATCHLIST_MAX = 150

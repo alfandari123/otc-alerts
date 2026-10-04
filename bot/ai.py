@@ -15,8 +15,9 @@ He wants to catch news that can push a stock price UP, for example:
 - merger, reverse merger, acquisition, share exchange, letter of intent
 - change of control, custodianship, new controlling shareholder, new management
 - end of dilution: share cancellation/retirement, reduction of authorized shares, toxic/convertible debt paid off, lock-up
-- ticker/name change tied to a new business, uplisting (Pink -> OTCQB/OTCQX/Nasdaq), becoming current,
-  Caveat Emptor or shell flag removed, becoming an SEC reporting company
+- ticker/name change tied to a new business, uplisting (tiers from best to worst: OTCQX, OTCQB, OTCID,
+  Pink Limited, Expert Market/Grey), leaving the Expert Market, Caveat Emptor or shell flag removed,
+  becoming an SEC reporting company
 - big contracts, real revenue, buybacks
 Bad for shareholders: new share issuance, convertible notes, Reg A / S-1 offerings, increase in authorized shares,
 reverse split, going dark, delisting, bankruptcy, SEC trading suspension, Caveat Emptor.
@@ -37,6 +38,7 @@ ITEM
 Source: {src}
 Company: {company}
 Ticker: {tickers}
+Tier: {tier}
 Current price: {price}
 Title: {title}
 Text:
@@ -63,7 +65,7 @@ def analyze(item, price=None):
     global calls, last_error, _model, _auth_failed
     prompt = PROMPT.format(
         src=item.get("src_label", ""), company=item.get("company", ""),
-        tickers=", ".join(item.get("syms") or []) or "unknown",
+        tickers=", ".join(item.get("syms") or []) or "unknown", tier=item.get("tier") or "unknown",
         price=f"${price}" if price else "unknown",
         title=item.get("title", ""), text=(item.get("text") or "")[:9000],
     )

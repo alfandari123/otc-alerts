@@ -56,6 +56,14 @@ FINRA_REASONS = [
     ("Addition", (0, 1, "מניה חדשה במסחר", False)),
 ]
 
+# OTC Markets disclosure types (news from the OTC Disclosure & News Service)
+OTCM_TYPES = {
+    "Company Officers/Directors Change Announcement": (+1, 2, "שינוי בהנהלה / בדירקטוריון"),
+    "Notification of Changes In Shares Outstanding": (0, 2, "שינוי במספר המניות"),
+    "Officer/Director/Affiliate Stock Transactions": (0, 2, "עסקאות של בעלי עניין במניה"),
+    "Notice of Shareholder Meeting": (0, 1, "אסיפת בעלי מניות"),
+}
+
 CAVEAT_REMOVED = r"caveat emptor\b.{0,40}\b(remov\w*|lift\w*)|(remov\w*|lift\w*)\b.{0,40}\bcaveat emptor"
 
 KEYWORDS = [
@@ -74,7 +82,8 @@ KEYWORDS = [
      r"|share buy ?back|repurchase (program|plan)"),
     (+1, 2, "שדרוג דרגת מסחר",
      r"uplist\w*|(approved|accepted|begins? trading|move[sd]?|graduat\w*|upgrade[sd]?) (on|to|for) (the )?(OTCQB|OTCQX)"
-     r"|pink current|current information tier|shell (status|designation|risk)\b.{0,40}\b(remov\w*|lift\w*)"
+     r"|(approved|accepted|begins? trading|move[sd]?|upgrade[sd]?) (on|to|for) (the )?OTCID"
+     r"|pink current|current information tier|expert market\b.{0,40}\b(exit\w*|remov\w*|no longer)|shell (status|designation|risk)\b.{0,40}\b(remov\w*|lift\w*)"
      r"|DTC eligib\w*|" + CAVEAT_REMOVED),
     (+1, 2, "שינוי שם / טיקר",
      r"name change|symbol change|new (ticker|trading symbol|symbol)|ticker (symbol )?change"),
@@ -104,7 +113,10 @@ def classify(it):
     """Returns {"pol", "ps" (strongest positive), "strength", "label", "labels", "candidate"}."""
     signals = []
     market_ok = False
-    if it["src"] == "SEC":
+    if it.get("signal"):  # OTC Markets events arrive already classified
+        p, s, lab, market_ok = it["signal"]
+        signals.append((p, s, lab))
+    elif it["src"] == "SEC":
         r = _form_rule(it.get("form", ""))
         if r:
             signals.append(r)
@@ -119,7 +131,9 @@ def classify(it):
                 signals.append((p, s, lab))
                 market_ok = market
                 break
-    if it["src"] != "FINRA":
+    if it["src"] == "OTCM" and it.get("type") in OTCM_TYPES:
+        signals.append(OTCM_TYPES[it["type"]])
+    if it["src"] in ("SEC", "PRN", "OTCM"):
         text = f"{it.get('title', '')} {it.get('text', '')}"
         for p, s, lab, rx in _KEYWORDS:
             if rx.search(text):
@@ -135,7 +149,7 @@ def classify(it):
     for _, _, lab in sorted(signals, key=lambda x: (-x[1], -x[0])):
         if lab not in labels:
             labels.append(lab)
-    if it["src"] == "FINRA":
+    if it["src"] == "FINRA" or it.get("signal"):
         candidate = market_ok
     else:
         candidate = pos >= 2 or (neu >= 2 and neg < 2)

@@ -1,0 +1,57 @@
+23:27:40 OTC Markets: 146 items (partial: 1 feeds failed)
+23:27:48 SEC: 49 items
+23:27:49 FINRA: 71 items
+23:27:54 PR Newswire: 0 items
+23:27:54 new items: 266
+
+------------------------------------------------------------
+🟢 <b>JMJN</b> · $0.0005
+<b>שינוי טיקר</b>
+Jiumei Junniang Group Co. Common Stock
+טיקר ישן: SSOF · טיקר חדש: JMJN
+שם חדש: Jiumei Junniang Group Co. Common Stock (היה: Sixty Six Oilfield Services, Inc. Common Stock)
+בתוקף מ: 2026-10-01
+Announcement includes name change, symbol change, CUSIP change, and domicile change (from NV to FL)
+📄 FINRA Daily List – Name/Symbol/CUSIP Change · <a href="https://otce.finra.org/otce/dailyList">למקור</a> · <a href="https://www.otcmarkets.com/stock/JMJN/overview">OTC Markets</a>
+
+------------------------------------------------------------
+🟢 <b>GBMRF</b> · $0.01
+<b>קיבלה זכאות לציטוט מחירים (Piggyback)</b>
+GBM RESOURCES LTD.
+דרגה נוכחית: Pink Limited
+📄 OTC Markets – אירועי מסחר · <a href="https://www.otcmarkets.com/stock/GBMRF/overview">למקור</a> · <a href="https://www.otcmarkets.com/stock/GBMRF/overview">OTC Markets</a>
+
+------------------------------------------------------------
+🟢 <b>TMGI</b> · $0.0001 · ⭐ ברשימה שלך
+<b>החלפת שליטה</b>
+Transglobal Management Group, Inc.
+זוהה: החלפת שליטה · הסכם מהותי (ייתכן מיזוג) · הנפקת מניות (דילול)
+📄 SEC 8-K (סעיפים 1.01, 1.02, 3.02, 5.01, 5.02, 9.01) · <a href="https://www.sec.gov/Archives/edgar/data/1434601/000168316826007548/0001683168-26-007548-index.htm">למקור</a> · <a href="https://www.otcmarkets.com/stock/TMGI/overview">OTC Markets</a>
+<i>(בלי AI – זיהוי לפי מילות מפתח)</i>
+
+------------------------------------------------------------
+⚪ <b>SOBR</b> · $0.049 · ⭐ ברשימה שלך
+<b>אירוע אחר</b>
+SOBR Safe, Inc.
+זוהה: אירוע אחר
+📄 SEC 8-K (סעיפים 8.01, 9.01) · <a href="https://www.sec.gov/Archives/edgar/data/1425627/000147793226006034/0001477932-26-006034-index.htm">למקור</a> · <a href="https://www.otcmarkets.com/stock/SOBR/overview">OTC Markets</a>
+<i>(בלי AI – זיהוי לפי מילות מפתח)</i>
+
+------------------------------------------------------------
+⚪ <b>SOBR</b> · $0.049 · ⭐ ברשימה שלך
+<b>חדשה</b>
+Pink Limited
+SOBR Provides Update and Explores Potential Options
+📄 OTC Markets – ACCESS Newswire · <a href="https://www.otcmarkets.com/stock/SOBR/news/sobr-provides-update-and-explores-potential-options?id=537240">למקור</a> · <a href="https://www.otcmarkets.com/stock/SOBR/overview">OTC Markets</a>
+<i>(בלי AI – זיהוי לפי מילות מפתח)</i>
+
+------------------------------------------------------------
+🟢 <b>MSCH</b> · $0.14 · ⭐ ברשימה שלך
+<b>הנהלה חדשה</b>
+OTCID
+MainStreetChamber of Commerce Launches Main Street Hispanic Chamber of Commerce, Names Steve Garcia President
+זוהה: הנהלה חדשה
+📄 OTC Markets – OTC Disclosure &amp; News Service · <a href="https://www.otcmarkets.com/stock/MSCH/news/mainstreetchamber-of-commerce-launches-main-street-hispanic-chamber-of-commerce-?id=537249">למקור</a> · <a href="https://www.otcmarkets.com/stock/MSCH/overview">OTC Markets</a>
+<i>(בלי AI – זיהוי לפי מילות מפתח)</i>
+23:28:12 market volume: FAILED (HTTP 412)
+23:28:12 done: 266 items, 6 alerts, 0 AI calls, 34s
