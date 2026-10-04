@@ -55,6 +55,14 @@ def gemini():
     if not config.GEMINI_API_KEY:
         print("Gemini             skipped (no GEMINI_API_KEY)")
         return
+    try:
+        r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", params={"pageSize": 200},
+                         headers={"x-goog-api-key": config.GEMINI_API_KEY}, timeout=30)
+        names = [m["name"].split("/")[-1] for m in r.json().get("models", [])
+                 if "generateContent" in m.get("supportedGenerationMethods", []) and "flash" in m["name"]]
+        print("Gemini models with generateContent:", ", ".join(names))
+    except (requests.RequestException, ValueError, KeyError) as e:
+        print("Gemini model list ERROR", type(e).__name__)
     url = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
     body = {"contents": [{"role": "user", "parts": [{"text": 'Answer with JSON {"ok": true}'}]}],
             "generationConfig": {"responseMimeType": "application/json"}}
