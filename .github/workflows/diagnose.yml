@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "empty = all sources, prn = PR Newswire variants, ai = Gemini models"
+        description: "empty = all sources, prn = PR Newswire variants, ai = Gemini models, ai-item = AI on a real filing"
         required: false
         default: ""
 

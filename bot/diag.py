@@ -76,11 +76,28 @@ def gemini():
             print(f"Gemini {m:26} ERROR {type(e).__name__}")
 
 
+def ai_item():
+    """End-to-end AI check on a public SEC filing (change of control at TMGI, Oct 2026)."""
+    import json
+    from . import ai
+    from .sources import sec
+    it = {"src": "SEC", "src_label": "SEC 8-K (items 1.01, 1.02, 3.02, 5.01, 5.02)", "form": "8-K",
+          "company": "Transglobal Management Group, Inc.", "syms": ["TMGI"], "title": "8-K – Transglobal Management Group",
+          "text": "8-K filing. Item 5.01 Changes in Control of Registrant.",
+          "url": "https://www.sec.gov/Archives/edgar/data/1434601/000168316826007548/0001683168-26-007548-index.htm"}
+    sec.enrich(it)
+    print("AI item text length:", len(it["text"]))
+    print("AI result:", json.dumps(ai.analyze(it, 0.0001), ensure_ascii=False, indent=1), "| model:", ai._model,
+          "| error:", ai.last_error)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if "prn" in sys.argv:
         return prn()
+    if "ai-item" in sys.argv:
+        return ai_item()
     if "ai" in sys.argv:
         return gemini()
     for name, method, url, kw in CHECKS:
