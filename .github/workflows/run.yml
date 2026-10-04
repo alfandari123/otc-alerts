@@ -1,0 +1,69 @@
+name: OTC alerts
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"      # GitHub may delay scheduled runs by a few minutes
+  workflow_dispatch:
+
+permissions:
+  contents: write              # save the encrypted state to the `state` branch
+  actions: write               # keep the schedule from being auto-disabled
+
+concurrency:
+  group: otc-alerts
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -q -r requirements.txt
+
+      - name: Load state
+        id: load
+        run: |
+          if git ls-remote --exit-code --heads origin state > /dev/null; then
+            git fetch -q --depth=1 origin state
+            git show FETCH_HEAD:state.bin > state.bin
+          else
+            echo "No saved state yet (first run)."
+          fi
+
+      - name: Run bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
+        run: python -m bot.main
+
+      - name: Save state
+        if: always() && steps.load.outcome == 'success'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          [ -f state.bin ] || exit 0
+          mkdir -p /tmp/st && cp state.bin /tmp/st/ && cd /tmp/st
+          git init -q -b state
+          git add state.bin
+          git -c user.name="otc-alerts-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "state"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git" state
+
+      - name: Keep schedule alive
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub disables schedules after 60 days without activity; re-enable once a day.
+          if [ "$(date -u +%H)" = "00" ] && [ "$(date -u +%M)" -lt 10 ]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/run.yml/enable" || true
+          fi

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+state.bin
+state.local.json
+*.tmp
+.state_key
