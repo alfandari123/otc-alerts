@@ -27,9 +27,34 @@ CHECKS = [
 ]
 
 
+PRN_TRIES = [
+    ("browser UA", {"User-Agent": config.BROWSER_UA}),
+    ("browser UA + accept", {"User-Agent": config.BROWSER_UA, "Accept": "application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
+                             "Accept-Language": "en-US,en;q=0.9"}),
+    ("feed reader UA", {"User-Agent": "Mozilla/5.0 (compatible; Feedly/1.0; +http://www.feedly.com/fetcher.html)"}),
+    ("python default UA", {}),
+    ("curl UA", {"User-Agent": "curl/8.5.0", "Accept": "*/*"}),
+]
+PRN_URLS = ["https://www.prnewswire.com/rss/news-releases-list.rss",
+            "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss",
+            "https://www.prnewswire.com/news-releases/news-releases-list/"]
+
+
+def prn():
+    for url in PRN_URLS:
+        for label, headers in PRN_TRIES:
+            try:
+                r = requests.get(url, headers=headers, timeout=20)
+                print(f"PRN {url[29:70]:42} {label:22} {r.status_code} {len(r.content):>7} items={r.text.count('<item>')}")
+            except requests.RequestException as e:
+                print(f"PRN {url[29:70]:42} {label:22} ERROR {type(e).__name__}")
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if "prn" in sys.argv:
+        return prn()
     for name, method, url, kw in CHECKS:
         headers = {"User-Agent": config.SEC_UA if name.startswith("SEC") else config.BROWSER_UA}
         headers.update(kw.pop("headers", {}))

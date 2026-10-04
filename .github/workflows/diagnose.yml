@@ -2,6 +2,11 @@ name: Diagnose sources
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "empty = all sources, prn = PR Newswire variants"
+        required: false
+        default: ""
 
 jobs:
   diag:
@@ -17,4 +22,4 @@ jobs:
       - name: Check which data sources answer from GitHub's servers
         env:
           SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
-        run: python -m bot.diag
+        run: python -m bot.diag ${{ inputs.mode }}
