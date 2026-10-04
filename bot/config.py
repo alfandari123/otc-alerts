@@ -12,11 +12,11 @@ SCORE_ABOVE_RANGE = 9     # price above the band -> only very strong news
 EVENT_ABOVE_RANGE_MAX_PRICE = 0.10   # strong events (e.g. Caveat Emptor removed) above the band, up to this price
 
 # --- AI (Google Gemini, free tier). First model that works is used. ---
-GEMINI_MODELS = [
+GEMINI_MODELS = [            # each model has its own free daily quota
     "gemini-flash-lite-latest",
-    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
     "gemini-flash-latest",
-    "gemini-2.5-flash",
 ]
 AI_DAILY_LIMIT = 400      # stay under the free daily quota
 AI_PER_RUN_LIMIT = 25     # keep each run short; the rest waits for the next run
