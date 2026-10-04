@@ -259,7 +259,8 @@ def _actions():
                 if it:
                     items.append(it)
         except Exception as e:
-            problems.append(f"{path.rsplit('/', 1)[-1]}: {net.short_err(e)}")
+            if "maintenance" not in str(e):   # planned maintenance of one feed is not an outage
+                problems.append(f"{path.rsplit('/', 1)[-1]}: {net.short_err(e)}")
     return items
 
 

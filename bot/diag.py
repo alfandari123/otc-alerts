@@ -50,11 +50,31 @@ def prn():
                 print(f"PRN {url[29:70]:42} {label:22} ERROR {type(e).__name__}")
 
 
+def gemini():
+    """Which Gemini models answer with this key (prints status codes only)."""
+    if not config.GEMINI_API_KEY:
+        print("Gemini             skipped (no GEMINI_API_KEY)")
+        return
+    url = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
+    body = {"contents": [{"role": "user", "parts": [{"text": 'Answer with JSON {"ok": true}'}]}],
+            "generationConfig": {"responseMimeType": "application/json"}}
+    for m in config.GEMINI_MODELS:
+        t = time.time()
+        try:
+            r = requests.post(url.format(m), json=body, timeout=60, headers={"x-goog-api-key": config.GEMINI_API_KEY})
+            note = "OK" if r.status_code == 200 else r.text[:160].replace("\n", " ")
+            print(f"Gemini {m:26} {r.status_code}  {time.time() - t:4.1f}s  {note}")
+        except requests.RequestException as e:
+            print(f"Gemini {m:26} ERROR {type(e).__name__}")
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if "prn" in sys.argv:
         return prn()
+    if "ai" in sys.argv:
+        return gemini()
     for name, method, url, kw in CHECKS:
         headers = {"User-Agent": config.SEC_UA if name.startswith("SEC") else config.BROWSER_UA}
         headers.update(kw.pop("headers", {}))

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "empty = all sources, prn = PR Newswire variants"
+        description: "empty = all sources, prn = PR Newswire variants, ai = Gemini models"
         required: false
         default: ""
 
@@ -22,4 +22,5 @@ jobs:
       - name: Check which data sources answer from GitHub's servers
         env:
           SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python -m bot.diag ${{ inputs.mode }}
