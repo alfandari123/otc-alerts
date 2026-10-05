@@ -31,6 +31,10 @@ def fresh():
         "avgvol": {},           # ticker -> [day, average daily volume]
         "mvol_last": 0,
         "otc_actions_last": 0,
+        "dil": {},              # ticker -> [day, dilution summary]
+        "tso": {},              # ticker -> last seen outstanding/authorized shares (watchlist)
+        "secid": {},            # ticker -> OTC Markets security id
+        "dilw_last": 0,
         "health": {},           # source -> {"ok": ts, "err": str, "warned": bool}
         "runs": 0,
         "last_run": 0,

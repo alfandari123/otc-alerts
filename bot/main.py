@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, market, rules, state, telegram
+from . import ai, config, dilution, market, rules, state, telegram
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -218,6 +218,10 @@ def _watch_hits(syms, watch):
     return [s for s in syms if s in watch or (len(s) == 5 and s.endswith("D") and s[:-1] in watch)]
 
 
+def _dil(st, syms):
+    return dilution.summary(syms[0], st, str(et_now().date())) if syms else None
+
+
 def evaluate(run, it):
     """Returns the alert text, or None when the item is not worth an alert."""
     st = run.st
@@ -234,6 +238,12 @@ def evaluate(run, it):
         rule = rules.classify(it)
         if not rule["candidate"]:
             return None
+    if not hit and it["src"] == "OTCM" and syms:
+        # OTC Markets files a release under every company it mentions: skip it when it is about another one.
+        ENRICH["OTCM"](it)
+        named = prnews.tickers_in(it["text"][:3000])
+        if named and syms[0] not in named:
+            return None
     price = market.price(syms[:2]) if syms else None
     band = market.band(price)
     if not hit and band == "above" and rule["ps"] < 3:
@@ -242,7 +252,7 @@ def evaluate(run, it):
     if it["src"] in TEMPLATED:
         strong = rule["ps"] >= 3 and (price or 0) <= config.EVENT_ABOVE_RANGE_MAX_PRICE
         if hit or band == "in" or strong:
-            return action_message(it, rule, syms, price, bool(hit))
+            return action_message(it, rule, syms, price, bool(hit), _dil(st, syms))
         return None
 
     res = None
@@ -251,6 +261,7 @@ def evaluate(run, it):
             raise Defer
         if it["src"] in ENRICH:
             ENRICH[it["src"]](it)
+        it["shares"] = dilution.ai_text(_dil(st, syms))
         res = ai.analyze(it, price)
         if res:
             st["ai"]["n"] += 1
@@ -272,7 +283,7 @@ def evaluate(run, it):
                 "above": config.SCORE_ABOVE_RANGE}[band]
         if sentiment != "positive" or score < need:
             return None
-    return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score)
+    return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms))
 
 
 def _head(icon, sym, price, hit):
@@ -292,7 +303,7 @@ def _links(it, sym):
     return f"📄 {esc(it['src_label'])} · {links}"
 
 
-def alert_message(it, rule, res, syms, price, hit, sentiment, score):
+def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None):
     sym = syms[0] if syms else ""
     lines = [_head(ICON[sentiment], sym, price, hit)]
     if hit and sentiment == "negative":
@@ -311,13 +322,14 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score):
             lines.append("זוהה: " + esc(" · ".join(rule["labels"][:3])))
     if res and res["risk_he"]:
         lines.append("⚠️ " + esc(res["risk_he"]))
+    lines += dilution.lines(dil)
     lines.append(_links(it, sym))
     if not res:
         lines.append("<i>(בלי AI – זיהוי לפי מילות מפתח)</i>")
     return "\n".join(lines)
 
 
-def action_message(it, rule, syms, price, hit):
+def action_message(it, rule, syms, price, hit, dil=None):
     """Fixed-format message for FINRA / OTC Markets events."""
     pol = rule["pol"]
     sym = syms[0] if syms else ""
@@ -329,6 +341,7 @@ def action_message(it, rule, syms, price, hit):
         lines.append(esc(it["company"]))
     if it.get("text"):
         lines.append(esc(it["text"]))
+    lines += dilution.lines(dil)
     lines.append(_links(it, sym))
     return "\n".join(lines)
 
@@ -410,7 +423,8 @@ def volume_check(run, force=False):
         text = (f"📈 <b>{sym}</b> · ⭐ ברשימה שלך\n<b>ווליום חריג</b>\n"
                 f"{sp['vol']:,} מניות היום – {ratio} (ממוצע: {sp['avg']:,.0f})\n"
                 f"מחיר: ${fmt_price(sp['price'])}{chg}\n"
-                f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
+                + "".join(x + "\n" for x in dilution.lines(_dil(st, [sym])))
+                + f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
         if run.notify(text):
             st["vol"][sym] = str(today)
 
@@ -454,9 +468,32 @@ def market_volume_check(run, force=False):
                  f"מחזור: ${r.get('dollarVolume') or 0:,.0f}" + (f" · {r['tierName']}" if r.get("tierName") else "")]
         if r.get("isCaveatEmptor"):
             lines.append("⚠️ המניה מסומנת Caveat Emptor (גולגולת)")
+        lines += dilution.lines(_dil(st, [sym]))
         lines.append(f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
         if run.notify("\n".join(lines)):
             st["vol"]["m:" + sym] = str(today)
+
+
+# ---------- Dilution (watchlist) ----------
+
+def dilution_check(run, force=False):
+    """Alerts when outstanding or authorized shares of a watchlist stock change (transfer-agent data)."""
+    st = run.st
+    if not st["watch"] or (not force and time.time() - st["dilw_last"] < config.DILUTION_WATCH_EVERY_MIN * 60):
+        return
+    st["dilw_last"] = time.time()
+    st["tso"] = {s: v for s, v in st["tso"].items() if s in st["watch"]}
+    for sym, kind, old, new, date in dilution.watch(st):
+        up = new > old
+        if kind == "tso":
+            title, what = ("דילול חדש – נוספו מניות" if up else "מספר המניות ירד (ביטול מניות)"), "מספר המניות במחזור"
+        else:
+            title, what = ("הגדלת המניות המורשות" if up else "הקטנת המניות המורשות"), "מספר המניות המורשות"
+        run.notify(f"{'🔴' if up else '🟢'} <b>{sym}</b> · ⭐ ברשימה שלך\n<b>{title}</b>\n"
+                   f"{what} {'עלה' if up else 'ירד'} מ-{dilution.fmt(old)} ל-{dilution.fmt(new)} "
+                   f"(שינוי של {abs(new - old) / old * 100:.1f}%)\n"
+                   f"לפי סוכן ההעברות (דרך OTC Markets), נכון ל-{date}\n"
+                   f'<a href="https://www.otcmarkets.com/stock/{sym}/security">OTC Markets – מבנה המניות</a>')
 
 
 # ---------- Main ----------
@@ -498,6 +535,7 @@ def main():
         process(run, items)
         volume_check(run, force=args.force_vol)
         market_volume_check(run, force=args.force_vol)
+        dilution_check(run, force=args.force_vol)
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
         if ai.calls:

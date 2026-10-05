@@ -40,6 +40,7 @@ Company: {company}
 Ticker: {tickers}
 Tier: {tier}
 Current price: {price}
+Share structure: {shares}
 Title: {title}
 Text:
 {text}
@@ -66,7 +67,7 @@ def analyze(item, price=None):
     prompt = PROMPT.format(
         src=item.get("src_label", ""), company=item.get("company", ""),
         tickers=", ".join(item.get("syms") or []) or "unknown", tier=item.get("tier") or "unknown",
-        price=f"${price}" if price else "unknown",
+        price=f"${price}" if price else "unknown", shares=item.get("shares") or "unknown",
         title=item.get("title", ""), text=(item.get("text") or "")[:9000],
     )
     body = {

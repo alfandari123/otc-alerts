@@ -32,6 +32,13 @@ VOLUME_SPIKE_X_MARKET = 10
 VOLUME_MIN_DOLLARS_MARKET = 5000
 MARKET_VOLUME_MAX_ALERTS = 5    # per check
 
+# --- Dilution (share counts from OTC Markets' transfer-agent feed) ---
+DILUTION_WARN_3M = 0.10       # warn when shares grew 10%+ in 3 months
+DILUTION_WARN_6M = 0.25       # ... or 25%+ in 6 months
+AUTH_USED_WARN = 0.85         # warn when 85%+ of the authorized shares are already issued
+DILUTION_ALERT_MIN = 0.005    # watchlist alert when outstanding/authorized shares change by 0.5%+
+DILUTION_WATCH_EVERY_MIN = 180
+
 # --- Housekeeping ---
 WATCHLIST_MAX = 150
 SEEN_TTL_DAYS = 10
