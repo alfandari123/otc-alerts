@@ -32,12 +32,38 @@ def _get(url):
     return net.get(url, ua=config.SEC_UA, timeout=25)
 
 
+_tickers = {}   # downloaded once per run
+
+
 def _ticker_map():
-    m = {}
-    for cik, _name, ticker, exch in _get(TICKERS).json()["data"]:
-        if ticker:
-            m.setdefault(int(cik), []).append((ticker.upper(), exch))
-    return m
+    if not _tickers:
+        for cik, _name, ticker, exch in _get(TICKERS).json()["data"]:
+            if ticker:
+                _tickers.setdefault(int(cik), []).append((ticker.upper(), exch))
+    return _tickers
+
+
+def cik_for(sym):
+    """SEC company number of a ticker, or None when the company does not report to the SEC."""
+    if not config.SEC_CONTACT:
+        return None
+    return next((cik for cik, ts in _ticker_map().items() if any(t == sym for t, _ in ts)), None)
+
+
+def shares_series(cik, taxonomy, tag):
+    """[(date, shares)] from the company's XBRL filings, oldest first (latest filing wins per date)."""
+    url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik:010d}/{taxonomy}/{tag}.json"
+    try:
+        vals = _get(url).json().get("units", {}).get("shares", [])
+    except net.HttpError as e:
+        if e.status == 404:   # the company never reported this number
+            return []
+        raise
+    by_date = {}
+    for v in sorted(vals, key=lambda v: v.get("filed", "")):
+        if v.get("end") and v.get("val"):
+            by_date[v["end"]] = v["val"]
+    return sorted(by_date.items())
 
 
 def fetch(st):

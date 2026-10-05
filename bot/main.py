@@ -483,7 +483,7 @@ def dilution_check(run, force=False):
         return
     st["dilw_last"] = time.time()
     st["tso"] = {s: v for s, v in st["tso"].items() if s in st["watch"]}
-    for sym, kind, old, new, date in dilution.watch(st):
+    for sym, kind, old, new, date, src in dilution.watch(st):
         up = new > old
         if kind == "tso":
             title, what = ("דילול חדש – נוספו מניות" if up else "מספר המניות ירד (ביטול מניות)"), "מספר המניות במחזור"
@@ -492,7 +492,8 @@ def dilution_check(run, force=False):
         run.notify(f"{'🔴' if up else '🟢'} <b>{sym}</b> · ⭐ ברשימה שלך\n<b>{title}</b>\n"
                    f"{what} {'עלה' if up else 'ירד'} מ-{dilution.fmt(old)} ל-{dilution.fmt(new)} "
                    f"(שינוי של {abs(new - old) / old * 100:.1f}%)\n"
-                   f"לפי סוכן ההעברות (דרך OTC Markets), נכון ל-{date}\n"
+                   + ("לפי סוכן ההעברות (דרך OTC Markets)" if src == "OTC" else "לפי דוח של החברה ל-SEC")
+                   + f", נכון ל-{date}\n"
                    f'<a href="https://www.otcmarkets.com/stock/{sym}/security">OTC Markets – מבנה המניות</a>')
 
 
