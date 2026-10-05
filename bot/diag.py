@@ -109,6 +109,12 @@ def dil():
                     res.append(type(e).__name__)
                 time.sleep(2)
             print(f"DIL {sym} {path.split('?')[0][-40:]:42} {' '.join(res)}")
+    from .dilution import _from_sec
+    for sym in known:
+        try:
+            print(f"DIL SEC {sym}: {_from_sec(sym)}")
+        except Exception as e:
+            print(f"DIL SEC {sym}: ERROR {type(e).__name__} {e}")
 
 
 def main():
