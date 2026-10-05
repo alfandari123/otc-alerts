@@ -91,11 +91,32 @@ def ai_item():
           "| error:", ai.last_error)
 
 
+def dil():
+    """OTC Markets share-data endpoints (profile -> security id -> share history), 3 tries each."""
+    base = "https://backend.otcmarkets.com"
+    h = {"User-Agent": config.BROWSER_UA, **OTC_HEADERS}
+    known = {"AIBT": 235867, "TIPS": 73661, "TMGI": 417889}
+    for sym, sid in known.items():
+        for path in (f"/otcapi/company/profile/full/{sym}", f"/gateway/share-data-api/shares?page=1&pageSize=1&secId={sid}",
+                     f"/gateway/share-data-api/shares-dilution?page=1&pageSize=1&secId={sid}"):
+            res = []
+            for _ in range(3):
+                try:
+                    r = requests.get(base + path, headers=h, timeout=20)
+                    res.append(f"{r.status_code}/{'html' if 'html' in r.headers.get('Content-Type', '') else 'json'}")
+                except requests.RequestException as e:
+                    res.append(type(e).__name__)
+                time.sleep(2)
+            print(f"DIL {sym} {path.split('?')[0][-40:]:42} {' '.join(res)}")
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if "prn" in sys.argv:
         return prn()
+    if "dil" in sys.argv:
+        return dil()
     if "ai-item" in sys.argv:
         return ai_item()
     if "ai" in sys.argv:
