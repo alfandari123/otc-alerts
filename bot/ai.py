@@ -50,15 +50,22 @@ calls = 0            # successful calls in this run
 last_error = ""
 _model = None        # first model that worked in this run
 _dead = set()        # models that are missing or out of daily quota
+_skip = set()        # models that are slow / overloaded right now (skipped for this run only)
 _auth_failed = False
 
 
 def usable():
-    return bool(config.GEMINI_API_KEY) and not _auth_failed and len(_dead) < len(config.GEMINI_MODELS)
+    return (bool(config.GEMINI_API_KEY) and not _auth_failed
+            and len(_dead | _skip) < len(config.GEMINI_MODELS))
 
 
 def all_quota_dead():
     return len(_dead) >= len(config.GEMINI_MODELS)
+
+
+def broken():
+    """A lasting problem worth telling the owner about (not a one-off timeout)."""
+    return _auth_failed or all_quota_dead()
 
 
 def analyze(item, price=None):
@@ -76,15 +83,20 @@ def analyze(item, price=None):
     }
     models = ([_model] if _model else []) + [m for m in config.GEMINI_MODELS if m != _model]
     for m in models:
-        if m in _dead:
+        if m in _dead or m in _skip:
             continue
         for attempt in range(2):
             try:
-                r = session.post(URL.format(m), json=body, timeout=60,
+                r = session.post(URL.format(m), json=body, timeout=40,
                                  headers={"x-goog-api-key": config.GEMINI_API_KEY})
             except requests.RequestException as e:
                 last_error = type(e).__name__
-                return None
+                _skip.add(m)         # slow or unreachable right now: try the next model
+                break
+            if r.status_code >= 500:
+                last_error = f"HTTP {r.status_code}"
+                _skip.add(m)         # overloaded right now (e.g. 503 "high demand"): try the next model
+                break
             if r.status_code == 200:
                 res = _parse(r)
                 if res:

@@ -539,10 +539,8 @@ def main():
         dilution_check(run, force=args.force_vol)
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
-        if ai.calls:
-            set_health(st, "AI", None)
-        elif ai.last_error:
-            set_health(st, "AI", ai.last_error)
+        if config.GEMINI_API_KEY:   # a one-off timeout is not an outage; only a bad key / used-up quota is
+            set_health(st, "AI", ai.last_error if ai.broken() and not ai.calls else None)
         health_warnings(run)
     finally:
         st["last_run"] = time.time()
