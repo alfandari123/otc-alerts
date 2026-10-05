@@ -97,7 +97,8 @@ def dil():
     h = {"User-Agent": config.BROWSER_UA, **OTC_HEADERS}
     known = {"AIBT": 235867, "TIPS": 73661, "TMGI": 417889}
     for sym, sid in known.items():
-        for path in (f"/otcapi/company/profile/full/{sym}", f"/gateway/share-data-api/shares?page=1&pageSize=1&secId={sid}",
+        for path in (f"/otcapi/company/profile/full/{sym}", f"/otcapi/stock/trade/inside/{sym}?symbol={sym}",
+                     f"/gateway/share-data-api/shares?page=1&pageSize=1&secId={sid}",
                      f"/gateway/share-data-api/shares-dilution?page=1&pageSize=1&secId={sid}"):
             res = []
             for _ in range(3):
