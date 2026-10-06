@@ -1,0 +1,38 @@
+name: Watchdog
+
+# A second, independent loop (every ~10 minutes): restarts the bot loop if it stopped (e.g. a GitHub server died
+# mid-run). The bot loop restarts this one too, so one of them is always there to revive the other.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,37 * * * *"
+
+permissions:
+  actions: write
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: pace-watchdog      # wait timer: 10 minutes
+      deployment: false
+    steps:
+      - name: Schedule the next check, restart the bot loop if it stopped
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for i in 1 2 3; do gh workflow run watchdog.yml --repo "$REPO" && break; sleep 10; done
+          active=$(gh run list --repo "$REPO" --workflow run.yml --limit 5 --json status \
+                   --jq '[.[] | select(.status != "completed")] | length')
+          if [ "$active" -eq 0 ]; then
+            echo "Bot loop stopped - restarting it"
+            gh workflow run run.yml --repo "$REPO"
+          else
+            echo "Bot loop is alive"
+          fi

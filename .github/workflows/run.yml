@@ -1,7 +1,8 @@
 name: OTC alerts
 
-# Every run starts the next one at its end; the "pace" environment makes the next run wait ~4 minutes
-# (no server is used while waiting). The schedule below is only a safety net that restarts the loop.
+# Each run starts the next one as its FIRST step (so a GitHub server dying mid-run cannot break the loop);
+# the "pace" environment makes the next run wait ~4 minutes (no server is used while waiting).
+# watchdog.yml restarts this loop if it ever stops; the schedule below is one more safety net.
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -9,7 +10,7 @@ on:
 
 permissions:
   contents: write              # save the encrypted state to the `state` branch
-  actions: write               # start the next run, keep the schedule enabled
+  actions: write               # start the next run, revive the watchdog, keep schedules enabled
 
 concurrency:
   group: otc-alerts
@@ -23,6 +24,16 @@ jobs:
       name: pace               # wait timer: 4 minutes
       deployment: false
     steps:
+      - name: Start the next run, revive the watchdog if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for i in 1 2 3; do gh workflow run run.yml --repo "$REPO" && break; sleep 10; done
+          active=$(gh run list --repo "$REPO" --workflow watchdog.yml --limit 5 --json status \
+                   --jq '[.[] | select(.status != "completed")] | length' || echo 1)
+          if [ "$active" -eq 0 ]; then gh workflow run watchdog.yml --repo "$REPO" || true; fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
@@ -63,23 +74,14 @@ jobs:
             commit -q -m "state"
           git push -q -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git" state
 
-      - name: Start the next run
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for i in 1 2 3; do
-            gh workflow run run.yml --repo "${{ github.repository }}" && exit 0
-            sleep 10
-          done
-          exit 1
-
-      - name: Keep schedule alive
+      - name: Keep schedules alive
         if: github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # GitHub disables schedules after 60 days without activity; re-enable once a day.
           if [ "$(date -u +%H)" = "00" ] && [ "$(date -u +%M)" -lt 15 ]; then
-            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/run.yml/enable" || true
+            for wf in run.yml watchdog.yml; do
+              gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$wf/enable" || true
+            done
           fi
