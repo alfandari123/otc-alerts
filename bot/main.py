@@ -17,6 +17,7 @@ from .util import esc, et_now, fmt_price, il_time, log
 
 SOURCES = [("OTC Markets", otcm), ("SEC", sec), ("FINRA", finra), ("PR Newswire", prnews)]
 ENRICH = {"SEC": sec.enrich, "PRN": prnews.enrich, "OTCM": otcm.enrich}
+SOURCE_EVERY_SEC = {"FINRA": 900}    # FINRA's daily list changes rarely: no need to ask every minute
 TEMPLATED = ("FINRA", "OTCCA")       # events with a fixed message (no AI needed)
 HIGH_TIERS = ("QX", "QB")            # OTCQX/OTCQB require a bid of $0.01 or more
 TICKER_OK = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
@@ -195,10 +196,15 @@ def health_warnings(run):
 
 def collect(run):
     items = []
+    last = run.st.setdefault("src_last", {})
     for name, mod in SOURCES:
+        every = SOURCE_EVERY_SEC.get(name, 0)
+        if every and time.time() - last.get(name, 0) < every:
+            continue
         try:
             got = mod.fetch(run.st)
             items += got
+            last[name] = time.time()
             problems = getattr(mod, "problems", None)   # some feeds of the source failed
             set_health(run.st, name, "; ".join(problems)[:120] if problems else None)
             log(f"{name}: {len(got)} items" + (f" (partial: {len(problems)} feeds failed)" if problems else ""))
@@ -505,6 +511,8 @@ def main():
     ap.add_argument("--all", action="store_true", help="treat every collected item as new (testing)")
     ap.add_argument("--watch", default="", help="comma-separated watchlist to use (testing)")
     ap.add_argument("--force-vol", action="store_true", help="run the volume check now (testing)")
+    ap.add_argument("--loop", type=int, default=0,
+                    help="keep polling every POLL_EVERY_SEC for this many seconds (US news hours)")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -515,7 +523,6 @@ def main():
 
     st = state.load()
     state.prune(st)
-    run = Run(st, args.dry)
     if args.watch:
         st["watch"] = _tickers(args.watch.split(","))
     if args.all:
@@ -523,6 +530,18 @@ def main():
         st["warm"] = ["FINRA", "OTCCA", "OTCM", "PRN", "SEC"]
     if st["boot"] and not st["warm"]:
         st["warm"] = ["FINRA", "PRN", "SEC"]   # sources that existed before per-source warm-up
+    start = time.time()
+    while True:
+        tick = time.time()
+        cycle(st, args)
+        if time.time() - start + config.POLL_EVERY_SEC > args.loop:
+            break
+        time.sleep(max(0.0, config.POLL_EVERY_SEC - (time.time() - tick)))
+
+
+def cycle(st, args):
+    """One check of all sources (the state is saved at the end)."""
+    run = Run(st, args.dry)
     day = str(et_now().date())
     if st["ai"]["day"] != day:
         st["ai"].update(day=day, n=0)

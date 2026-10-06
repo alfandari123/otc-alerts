@@ -21,6 +21,7 @@ GEMINI_MODELS = [            # each model has its own free daily quota
 AI_DAILY_LIMIT = 400      # stay under the free daily quota
 AI_PER_RUN_LIMIT = 25     # keep each run short; the rest waits for the next run
 RUN_DEADLINE_SEC = 300    # stop starting new AI work after this many seconds
+POLL_EVERY_SEC = 60       # in US news hours the bot checks every minute (see run.yml)
 
 # --- Volume spikes (watchlist only) ---
 VOLUME_SPIKE_X = 5            # today's volume vs. the 20-day average

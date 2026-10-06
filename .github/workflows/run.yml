@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      fast:
+        description: "internal: US news hours - wait 1 minute, then check every minute for ~4 minutes"
+        required: false
+        default: "false"
 
 permissions:
   contents: write              # save the encrypted state to the `state` branch
@@ -21,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
-      name: pace               # wait timer: 4 minutes
+      name: ${{ inputs.fast == 'true' && 'pace-fast' || 'pace' }}   # wait timer: 1 / 4 minutes
       deployment: false
     steps:
       - name: Start the next run, revive the watchdog if needed
@@ -29,7 +34,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          for i in 1 2 3; do gh workflow run run.yml --repo "$REPO" && break; sleep 10; done
+          # US news hours (Mon-Fri 06:00-19:00 New York): check every minute; otherwise every ~4.5 minutes
+          fast=false
+          if [ "$(TZ=America/New_York date +%u)" -le 5 ] && [ "$(TZ=America/New_York date +%-H)" -ge 6 ] \
+             && [ "$(TZ=America/New_York date +%-H)" -lt 19 ]; then fast=true; fi
+          for i in 1 2 3; do gh workflow run run.yml --repo "$REPO" -f fast=$fast && break; sleep 10; done
           active=$(gh run list --repo "$REPO" --workflow watchdog.yml --limit 5 --json status \
                    --jq '[.[] | select(.status != "completed")] | length' || echo 1)
           if [ "$active" -eq 0 ]; then gh workflow run watchdog.yml --repo "$REPO" || true; fi
@@ -59,7 +68,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           STATE_KEY: ${{ secrets.STATE_KEY }}
           SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
-        run: python -m bot.main
+        run: python -m bot.main ${{ inputs.fast == 'true' && '--loop 240' || '' }}
 
       - name: Save state
         if: always() && steps.load.outcome == 'success'

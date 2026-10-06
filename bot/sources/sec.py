@@ -12,6 +12,7 @@ TICKERS = "https://www.sec.gov/files/company_tickers_exchange.json"
 FORMS = ["8-K", "SCHEDULE 13D", "SC 14F1", "PRE 14C", "DEF 14C", "10-12G",
          "S-1", "1-A", "RW", "15-12G", "15-15D"]
 MAX_PAGES = {"8-K": 4}
+SLOW_FORMS_EVERY_SEC = 300
 BIG_EXCHANGES = {"Nasdaq", "NYSE", "CBOE"}
 # Strong control signals are kept even when the SEC has no ticker for the company.
 NO_TICKER_KEEP = {"5.01", "5.06"}
@@ -73,7 +74,11 @@ def fetch(st):
     watch = set(st["watch"])
     since = (st.get("last_run") or 0) - 900
     found = {}
-    for form in FORMS:
+    # 8-K every time; the other forms are rare, so every few minutes is enough
+    slow_due = time.time() - st.get("sec_slow_last", 0) >= SLOW_FORMS_EVERY_SEC
+    if slow_due:
+        st["sec_slow_last"] = time.time()
+    for form in FORMS if slow_due else FORMS[:1]:
         for page in range(MAX_PAGES.get(form, 1)):
             entries = ENTRY.findall(_get(FEED.format(quote(form), page * 100)).text)
             oldest = None
