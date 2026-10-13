@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, dilution, market, rules, state, telegram
+from . import ai, config, dilution, market, rules, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -31,8 +31,14 @@ HELP = """🤖 <b>בוט התראות OTC</b>
 /list – הרשימה שלך
 /status – מצב הבוט והמקורות
 /test – הודעת ניסיון
+/portfolio – התיק הווירטואלי של סוכן המסחר
+/trades – 10 העסקאות האחרונות של הסוכן
 /help – העזרה הזו
-אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code>
+אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code>
+
+<b>סוכן מסחר (כסף וירטואלי, $5,000):</b>
+קונה אחרי חדשה חיובית חזקה רק ביחס סיכוי-סיכון של 1:3 לפחות, לא נוגע במדללים פעילים,
+ומזיז את העצירה למחיר הקנייה ברגע שהרווח שווה לסיכון. 🛒 קנייה · ✅ מכירה ברווח · 🔻 מכירה בהפסד
 
 <b>סימנים בהתראות:</b>
 🟢 חדשה חיובית · 🔴 חדשה שלילית · ⚪ ניטרלית · 📈 ווליום חריג · ⭐ מניה מהרשימה שלך
@@ -134,6 +140,10 @@ def command(st, text):
         return list_text(st)
     if cmd in ("/status", "status", "מצב", "סטטוס"):
         return status_text(st)
+    if cmd in ("/portfolio", "/pf", "portfolio", "תיק"):
+        return trader.portfolio_text(st)
+    if cmd in ("/trades", "trades", "עסקאות"):
+        return trader.trades_text(st)
     if cmd in ("/test", "test", "בדיקה"):
         return SAMPLE
     if cmd in ("/start", "/help", "help", "עזרה"):
@@ -258,6 +268,8 @@ def evaluate(run, it):
     if it["src"] in TEMPLATED:
         strong = rule["ps"] >= 3 and (price or 0) <= config.EVENT_ABOVE_RANGE_MAX_PRICE
         if hit or band == "in" or strong:
+            if rule["pol"] > 0 and rule["ps"] >= 3 and band == "in" and syms:
+                trader.on_news(st, syms[0], rules.fallback_score(rule), rule["label"], it, price)
             return action_message(it, rule, syms, price, bool(hit), _dil(st, syms))
         return None
 
@@ -289,6 +301,8 @@ def evaluate(run, it):
                 "above": config.SCORE_ABOVE_RANGE}[band]
         if sentiment != "positive" or score < need:
             return None
+    if res and syms and sentiment == "positive" and score >= config.TRADE_MIN_SCORE and band == "in":
+        trader.on_news(st, syms[0], score, res["category_he"] or rule["label"], it, price)
     return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms))
 
 
@@ -386,6 +400,10 @@ def process(run, items):
         if it["src"] in cold or (tk and tk in st["seen"]):
             _mark_seen(st, it)
             continue
+        try:
+            trader.on_item(st, it, rules.classify(it))
+        except Exception as e:
+            log(f"trader: item check failed: {short_err(e)}")
         try:
             text = evaluate(run, it)
         except Defer:
@@ -556,6 +574,10 @@ def cycle(st, args):
         volume_check(run, force=args.force_vol)
         market_volume_check(run, force=args.force_vol)
         dilution_check(run, force=args.force_vol)
+        try:
+            trader.cycle(run)
+        except Exception as e:
+            log(f"trader: FAILED ({short_err(e)})")
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
         if config.GEMINI_API_KEY:   # a one-off timeout is not an outage; only a bad key / used-up quota is
