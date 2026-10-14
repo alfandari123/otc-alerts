@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>מסך מסחר OTC</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#131722">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -57,6 +61,7 @@ footer{color:var(--mute);font-size:12px;text-align:center;padding:8px}
 </head>
 <body>
 <header><h1>📈 מסך מסחר OTC <span id="mode" class="mute" style="font-weight:400;font-size:12px">· כסף וירטואלי</span></h1>
+<button id="inst" class="tab" style="display:none">📲 התקן אפליקציה</button>
 <span id="upd" class="badge">טוען…</span></header>
 <main id="app"></main>
 <main id="livebox" style="padding-top:0"><section id="live"><h2>⚡ שוק חי <span class="c">Level 1 · Level 2 · עסקאות בזמן אמת</span></h2><div id="liveBody" class="empty">טוען…</div></section></main>
@@ -66,7 +71,16 @@ const RAW = "https://raw.githubusercontent.com/alfandari123/otc-alerts/state/das
 const API = "https://api.github.com/repos/alfandari123/otc-alerts/contents/dash.bin?ref=state";
 const $ = s => document.querySelector(s);
 const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
-const key = (new URLSearchParams(location.hash.slice(1))).get("k");
+// The personal key arrives once in the link (#k=...&s=...) and is kept on this device, so the installed app
+// (which opens without the link) still has it. It never goes to any server.
+const HP = new URLSearchParams(location.hash.slice(1));
+function keep(name, v){ try { if (v) localStorage.setItem(name, v); return v || localStorage.getItem(name); } catch(e){ return v; } }
+const key = keep("otc_k", HP.get("k"));
+if (HP.get("k")) history.replaceState(null, "", location.pathname);   // the key does not stay in the address bar
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+let installEv = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEv = e; $("#inst").style.display = ""; });
+document.addEventListener("click", e => { if (e.target.id === "inst" && installEv) { installEv.prompt(); installEv = null; e.target.style.display = "none"; } });
 let data = null, sel = null, charts = [];
 
 function b64(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
@@ -188,7 +202,7 @@ function render(){
 }
 
 // ---------- live market (Schwab stream): Level 1, Level 2 and the trade tape ----------
-const SKEY = (new URLSearchParams(location.hash.slice(1))).get("s");
+const SKEY = keep("otc_s", HP.get("s"));
 const WORKER = "https://otc-schwab.range-guard.workers.dev";
 const BOOKS = ["NASDAQ_BOOK", "NYSE_BOOK"];    // which book services carry OTC stocks is checked on the first connection
 const L1F = {0:"sym",1:"bid",2:"ask",3:"last",4:"bidSize",5:"askSize",8:"vol",9:"lastSize",10:"high",11:"low",12:"close",35:"tradeTime"};
