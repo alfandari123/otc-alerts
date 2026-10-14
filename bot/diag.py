@@ -141,9 +141,24 @@ def ins():
     print("INS done, companies with insider filings:", found)
 
 
+def deal_check(url):
+    """Share facts read from one real filing (bot/deal.py)."""
+    from . import deal
+    from .sources import sec
+    it = {"url": url, "text": "", "items": ["2.01", "3.02", "5.01"]}
+    sec.enrich(it)
+    print("DEAL full text chars:", len(it.get("full", "")))
+    f = deal.facts(it.get("full", ""), it["items"])
+    print("DEAL facts:", f, "| kind:", deal.kind(f))
+    for line in deal.lines(f, 5044334):
+        print("DEAL line:", line)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if "deal" in sys.argv:
+        return deal_check(sys.argv[-1])
     if "ins" in sys.argv:
         return ins()
     if "prn" in sys.argv:

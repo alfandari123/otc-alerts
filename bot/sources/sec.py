@@ -141,13 +141,17 @@ def _parse(e, tickers, watch):
 
 def enrich(it):
     """Adds the filing's main document (and first exhibit, often the press release) for the AI."""
+    if "full" in it:
+        return
     try:
         idx = _get(it["url"]).text
         docs = []
         for d in DOC.findall(idx):
             if "-index" not in d and d not in docs:
                 docs.append(d)
-        texts = [html_to_text(_get("https://www.sec.gov" + d).text)[:5000] for d in docs[:2]]
+        full = [html_to_text(_get("https://www.sec.gov" + d).text) for d in docs[:2]]
+        it["full"] = full[0][:400000] if full else ""     # whole main document: share facts of the deal (bot/deal.py)
+        texts = [t[:5000] for t in full]
         if texts:
             it["text"] += "\n\n" + "\n---\n".join(texts)
     except Exception:  # the AI can still work from the summary
