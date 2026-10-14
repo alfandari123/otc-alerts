@@ -1,9 +1,11 @@
 """Paper-trading agent (virtual money only).
 
 Buys an OTC stock after strong positive news when the price starts to move with volume, only if the
-possible gain is at least 3x the possible loss (after the spread). Stays away from active diluters and sells
-at once when dilution shows up. Once the gain equals the risk, the stop moves to the entry price (no loss),
-then trails behind the high.
+possible gain is at least 3x the possible loss - after the spread AND the broker fees. Stays away from active
+diluters. Once the gain equals the risk, the stop moves to the entry price (no loss), then trails the high.
+At the target it sells 2/3 and keeps 1/3 as a "bonus" when there is no dilution danger and the move is strong.
+Heavy selling is investigated (dilution? bad news? a seller sitting on one price?) before deciding to get out.
+A stock that does not move is held while there is no danger; bad news or dilution -> out at once.
 
 Prices are Yahoo 1-minute bars (last trades, no bid/ask). To stay honest every buy is filled one tick ABOVE
 the last trade and every sell one tick BELOW it, and a stop that is gapped through fills at the bar's open.
@@ -41,7 +43,14 @@ def init(st):
     pt = st.get("pt")
     if not pt:
         pt = st["pt"] = {"start": config.TRADE_START_CASH, "cash": config.TRADE_START_CASH, "pos": {},
-                         "cands": {}, "closed": [], "dil": {}, "skips": {}, "day_rep": "", "week_rep": ""}
+                         "cands": {}, "closed": [], "skips": {}, "day_rep": "", "week_rep": ""}
+    for k, v in (("dil", {}), ("neg", {}), ("eq_hist", []), ("fees", 0.0), ("notes", {})):
+        pt.setdefault(k, v)
+    for p in pt["pos"].values():   # positions opened by the first version
+        p.setdefault("basis", p["shares"] * p["entry"])
+        p.setdefault("shares0", p["shares"])
+        p.setdefault("runner", False)
+        p.setdefault("ref", p["stop0"])
     return pt
 
 
@@ -83,6 +92,19 @@ def _mins(now):
     return now.hour * 60 + now.minute
 
 
+def _days(ts):
+    return (time.time() - ts) / 86400
+
+
+def price_class(p):
+    """Trader slang for sub-penny price levels."""
+    if p < 0.001:
+        return "טריפס"     # $0.000X
+    if p < 0.01:
+        return "דאבס"      # $0.00XX
+    return "פני"
+
+
 # ---------- hooks called from main.py ----------
 
 def on_news(st, sym, score, cat, it, price):
@@ -90,7 +112,10 @@ def on_news(st, sym, score, cat, it, price):
     if not config.TRADE_ON or not sym:
         return
     pt = init(st)
-    if sym in pt["pos"] or sym in pt["cands"]:
+    if sym in pt["pos"]:
+        pt["pos"][sym]["news"] = [time.time(), cat]     # fresh good news for a stock we hold
+        return
+    if sym in pt["cands"]:
         return
     tier = (it.get("tier") or "").lower()
     if "expert" in tier or "grey" in tier:
@@ -102,23 +127,30 @@ def on_news(st, sym, score, cat, it, price):
 
 
 def on_item(st, it, rule):
-    """Any new item: remember tickers with fresh dilution signs (offerings, convertible notes, reverse split...)."""
+    """Any new item: remember fresh dilution signs and bad news per ticker."""
     if not config.TRADE_ON or not it.get("syms"):
         return
     labels = set(rule["labels"])
+    pt = init(st)
     if labels & DIL_LABELS and END_OF_DILUTION not in labels:
-        pt = init(st)
         for s in it["syms"]:
             pt["dil"][s] = time.time()
+    elif rule["pol"] < 0:
+        for s in it["syms"]:
+            pt["neg"][s] = [time.time(), rule["label"]]
 
 
-# ---------- buying ----------
+# ---------- danger checks ----------
 
-def _active_diluter(st, sym):
-    """Hebrew reason when the company is diluting now, else ''."""
+def _danger(st, sym, since=None):
+    """Hebrew reason when the stock is dangerous (dilution / bad news), else ''."""
     pt = st["pt"]
-    if time.time() - pt["dil"].get(sym, 0) < config.TRADE_DIL_FLAG_DAYS * 86400:
+    since = since or time.time() - config.TRADE_DIL_FLAG_DAYS * 86400
+    if pt["dil"].get(sym, 0) > since:
         return "דיווח טרי על הנפקה / הלוואה להמרה / ספליט הפוך"
+    neg = pt["neg"].get(sym)
+    if neg and neg[0] > since:
+        return f"חדשה שלילית: {neg[1]}"
     d = dilution.summary(sym, st, str(et_now().date()))
     if d:
         if (d.get("chg3") or 0) >= config.DILUTION_WARN_3M:
@@ -129,6 +161,35 @@ def _active_diluter(st, sym):
             return f"ניצלה {d['tso'] / d['auth'] * 100:.0f}% מהמניות המורשות – צפויה הגדלה ודילול"
     return ""
 
+
+def _seller_wall(bars):
+    """A big seller sitting on one price: many touches of the same high with heavy volume, no break.
+    Returns the price level or None."""
+    win = bars[-config.TRADE_WALL_BARS:]
+    if len(win) < config.TRADE_WALL_BARS or len(bars) < 2 * config.TRADE_WALL_BARS:
+        return None
+    level = max(b["h"] for b in win)
+    t = tick(level)
+    touches = sum(1 for b in win if b["h"] >= level - t / 2)
+    before = bars[:-len(win)]
+    normal = sum(b["v"] for b in before) / len(before) * len(win)
+    heavy = normal and sum(b["v"] for b in win) >= config.TRADE_WALL_VOL_X * normal
+    if touches >= config.TRADE_WALL_TOUCHES and heavy and win[-1]["c"] < level:
+        return level
+    return None
+
+
+def _momentum(bars):
+    """True when buyers are still in control: volume still strong and the price near the day's high."""
+    if len(bars) < 20:
+        return False
+    recent = bars[-10:]
+    avg_bar = sum(b["v"] for b in bars) / len(bars)
+    high = max(b["h"] for b in bars)
+    return sum(b["v"] for b in recent) / 10 >= avg_bar and recent[-1]["c"] >= high * 0.9
+
+
+# ---------- buying ----------
 
 def _plan(c, bars, prev):
     """Entry plan dict, or (None, reason in Hebrew) when the setup is not good (yet)."""
@@ -150,6 +211,9 @@ def _plan(c, bars, prev):
     high = max(b["h"] for b in bars)
     if high >= last * (1 + config.TRADE_DUMP_FROM_HIGH):
         return None, f"ירדה {(1 - last / high) * 100:.0f}% מהשיא של היום – לחץ מכירה"
+    wall = _seller_wall(bars)
+    if wall:
+        return None, f"מוכר גדול יושב על ${fmt_price(wall)} – המחיר לא עובר אותו"
     entry = _grid(last + t, last, True)
     swing = min(b["l"] for b in bars[-15:])
     stop = _grid(max(ref, swing - t), last, False)
@@ -160,10 +224,22 @@ def _plan(c, bars, prev):
     risk = entry - stop_fill
     if risk / entry > config.TRADE_MAX_RISK + 1e-9:
         return None, f"הסיכון גדול מדי ({risk / entry * 100:.0f}%) – צעד מחיר גדול מדי במחיר הזה"
-    target = _grid(entry + config.TRADE_RR * risk, last, True)
-    if target / entry - 1 > config.TRADE_MAX_TARGET:
-        return None, f"כדי לקבל 1:3 צריך עלייה של {(target / entry - 1) * 100:.0f}% – לא ריאלי"
-    return {"entry": entry, "stop": stop, "target": target, "risk": risk, "ref": ref}, ""
+    return {"entry": entry, "stop": stop, "risk": risk, "ref": ref}, ""
+
+
+def _size_pct(score, price):
+    """How much of the portfolio this setup deserves: stronger news = bigger; trips (0.000X) = smaller."""
+    pct = config.TRADE_SIZE_BY_SCORE.get(min(score, 10), config.TRADE_POSITION_PCT)
+    if price < 0.001:
+        pct *= config.TRADE_TRIPS_FACTOR
+    return min(pct, config.TRADE_MAX_POSITION_PCT)
+
+
+def _target(entry, risk, shares, p):
+    """Lowest target that still pays 3x the risk after fees: gain - 2 fees >= 3 x (loss + 2 fees)."""
+    fee = config.TRADE_FEE
+    need = config.TRADE_RR * risk + (2 * fee * (1 + config.TRADE_RR)) / shares
+    return _grid(entry + need, p, True)
 
 
 def _buy(run, sym, c):
@@ -175,7 +251,7 @@ def _buy(run, sym, c):
     if len(bars) < config.TRADE_CONFIRM_BARS:
         c["why"] = "אין מספיק מסחר היום"
         return False
-    why = _active_diluter(st, sym)
+    why = _danger(st, sym)
     if why:
         c["why"], c["drop"] = why, True
         return False
@@ -188,56 +264,149 @@ def _buy(run, sym, c):
     if avg and vol < config.TRADE_VOL_CONFIRM_X * avg:
         c["why"] = f"אין מספיק ווליום ({vol / avg:.1f} מהממוצע)"
         return False
-    if len(pt["pos"]) >= config.TRADE_MAX_POSITIONS:
+    if len(pt["pos"]) >= config.TRADE_MAX_POSITIONS and not _rotate(run, c):
         c["why"] = "כבר יש מקסימום מניות פתוחות"
         return False
-    budget = min(equity(pt) * config.TRADE_POSITION_PCT, pt["cash"])
-    budget = min(budget, vol * config.TRADE_MAX_VOL_SHARE * plan["entry"])  # we must be able to get out
-    shares = int(budget / plan["entry"])
-    if shares * plan["entry"] < config.TRADE_MIN_DOLLARS:
-        c["why"] = "אין מספיק מסחר במניה בשביל עסקה בגודל הזה"
+    entry, risk = plan["entry"], plan["risk"]
+    pct = _size_pct(c["score"], entry)
+    budget = min(equity(pt) * pct, pt["cash"] - config.TRADE_FEE)
+    budget = min(budget, vol * config.TRADE_MAX_VOL_SHARE * entry)   # we must be able to get out
+    shares = int(budget / entry)
+    if shares * entry < config.TRADE_MIN_DOLLARS:
+        c["why"] = "אין מספיק מסחר במניה בשביל עסקה כדאית"
         return False
-    cost = shares * plan["entry"]
-    pt["cash"] -= cost
+    target = _target(entry, risk, shares, entry)
+    if target / entry - 1 > config.TRADE_MAX_TARGET:
+        c["why"] = f"כדי לקבל 1:3 אחרי עמלות צריך עלייה של {(target / entry - 1) * 100:.0f}% – לא ריאלי"
+        return False
+    cost = shares * entry
+    pt["cash"] -= cost + config.TRADE_FEE
+    pt["fees"] += config.TRADE_FEE
     d = dilution.summary(sym, st, str(now.date()))
-    pt["pos"][sym] = {"shares": shares, "entry": plan["entry"], "stop": plan["stop"], "stop0": plan["stop"],
-                      "target": plan["target"], "R": plan["risk"], "high": plan["entry"], "last": bars[-1]["c"],
+    pt["pos"][sym] = {"shares": shares, "shares0": shares, "entry": entry, "stop": plan["stop"],
+                      "stop0": plan["stop"], "target": target, "R": risk, "high": entry, "last": bars[-1]["c"],
                       "opened": time.time(), "last_t": bars[-1]["t"], "cat": c["cat"], "score": c["score"],
-                      "tso0": d["tso"] if d else None, "tso_chk": time.time(), "be": False}
-    gain = (plan["target"] / plan["entry"] - 1) * 100
-    loss = plan["risk"] / plan["entry"] * 100
-    run.notify(f"🛒 <b>קנייה וירטואלית: {sym}</b>\n"
+                      "ref": plan["ref"], "basis": cost + config.TRADE_FEE, "tso0": d["tso"] if d else None,
+                      "tso_chk": time.time(), "be": False, "runner": False, "title": c.get("title", ""),
+                      "url": c.get("url", "")}
+    gain = (target / entry - 1) * 100
+    loss = risk / entry * 100
+    net_gain = shares * (target - entry) - 2 * config.TRADE_FEE
+    net_loss = shares * risk + 2 * config.TRADE_FEE
+    run.notify(f"🛒 <b>קנייה וירטואלית: {sym}</b> ({price_class(entry)})\n"
                f"{esc(c['cat'])} · ציון {c['score']}/10\n"
-               f"{shares:,} מניות × ${fmt_price(plan['entry'])} = ${cost:,.0f} "
-               f"({cost / equity(pt) * 100:.0f}% מהתיק)\n"
-               f"🎯 יעד: ${fmt_price(plan['target'])} (+{gain:.0f}%)\n"
-               f"🛑 עצירה: ${fmt_price(plan['stop'])} (−{loss:.0f}%)\n"
-               f"יחס סיכוי-סיכון: 1:{(plan['target'] - plan['entry']) / plan['risk']:.1f}\n"
+               f"{shares:,} מניות × ${fmt_price(entry)} = ${cost:,.0f} ({cost / equity(pt) * 100:.0f}% מהתיק)\n"
+               f"🎯 יעד: ${fmt_price(target)} (+{gain:.0f}%) · 🛑 עצירה: ${fmt_price(plan['stop'])} (−{loss:.0f}%)\n"
+               f"אחרי עמלות: רווח אפשרי ${net_gain:,.0f} מול הפסד אפשרי ${net_loss:,.0f} "
+               f"(1:{net_gain / net_loss:.1f})\n"
                f"מחיר לפני החדשה: ${fmt_price(plan['ref'])}\n"
-               f"כשהרווח יגיע ל-+{loss:.0f}% העצירה תעלה למחיר הקנייה (בלי הפסד).")
+               f"ברווח של +{loss:.0f}% העצירה עולה למחיר הקנייה (בלי הפסד). ביעד: מוכר 2/3, ו-1/3 נשאר כבונוס "
+               "אם אין סכנת דילול.")
     log("trader: bought")
+    return True
+
+
+def _rotate(run, c):
+    """All slots are full: free one by selling a stock that has been standing still, for much stronger news."""
+    pt = run.st["pt"]
+    if c["score"] < config.TRADE_ROTATE_SCORE:
+        return False
+    still = [(p["opened"], s) for s, p in pt["pos"].items()
+             if _days(p["opened"]) >= config.TRADE_STALE_DAYS and abs(p.get("last", p["entry"]) - p["entry"]) < 0.5 * p["R"]]
+    if not still:
+        return False
+    _, sym = min(still)
+    p = pt["pos"][sym]
+    _sell(run, sym, p["shares"], p["last"] - tick(p["last"]),
+          f"מפנה מקום: המניה עומדת {_days(p['opened']):.0f} ימים, ויש הזדמנות חזקה יותר")
     return True
 
 
 # ---------- selling ----------
 
-def _close(run, sym, fill, reason):
+def _sell(run, sym, shares, fill, reason):
+    """Sell `shares` (all or part). Returns True when the position is closed."""
     pt = run.st["pt"]
-    p = pt["pos"].pop(sym)
+    p = pt["pos"][sym]
+    shares = min(shares, p["shares"])
     fill = max(fill, tick(fill))
-    pnl = p["shares"] * (fill - p["entry"])
-    pt["cash"] += p["shares"] * fill
+    basis = p["basis"] * shares / p["shares"]
+    proceeds = shares * fill - config.TRADE_FEE
+    pnl = proceeds - basis
+    pt["cash"] += proceeds
+    pt["fees"] += config.TRADE_FEE
+    p["basis"] -= basis
+    p["shares"] -= shares
+    closed = p["shares"] <= 0
     r_mult = (fill - p["entry"]) / p["R"] if p["R"] else 0
-    pt["closed"].append({"sym": sym, "entry": p["entry"], "exit": fill, "shares": p["shares"], "pnl": round(pnl, 2),
-                         "r": round(r_mult, 2), "opened": p["opened"], "closed": time.time(), "why": reason})
+    pt["closed"].append({"sym": sym, "entry": p["entry"], "exit": fill, "shares": shares, "pnl": round(pnl, 2),
+                         "r": round(r_mult, 2), "opened": p["opened"], "closed": time.time(), "why": reason,
+                         "part": not closed})
     pt["closed"] = pt["closed"][-300:]
+    if closed:
+        pt["pos"].pop(sym)
     pct = (fill / p["entry"] - 1) * 100
     icon = "✅" if pnl > 0.005 else ("⚪" if pnl > -0.005 else "🔻")
-    run.notify(f"{icon} <b>מכירה וירטואלית: {sym}</b>\n{esc(reason)}\n"
+    part = "" if closed else f" (חלקית – {shares:,} מתוך {shares + p['shares']:,} מניות)"
+    run.notify(f"{icon} <b>מכירה וירטואלית: {sym}</b>{part}\n{esc(reason)}\n"
                f"קנייה ${fmt_price(p['entry'])} ← מכירה ${fmt_price(fill)} ({pct:+.0f}%)\n"
-               f"רווח/הפסד: <b>{'+' if pnl >= 0 else '−'}${abs(pnl):,.2f}</b> ({r_mult:+.1f}R)\n"
-               f"שווי התיק: ${equity(pt):,.0f}")
-    log("trader: sold")
+               f"רווח/הפסד אחרי עמלות: <b>{'+' if pnl >= 0 else '−'}${abs(pnl):,.2f}</b> ({r_mult:+.1f}R)\n"
+               + ("" if closed else f"נשארו {p['shares']:,} מניות כבונוס · 🛑 עצירה ${fmt_price(p['stop'])} (ברווח)\n")
+               + f"שווי התיק: ${equity(pt):,.0f}")
+    log("trader: sold" + ("" if closed else " (part)"))
+    return closed
+
+
+def _note(run, sym, key, text):
+    """One information message per stock per day (no spam)."""
+    notes = run.st["pt"]["notes"]
+    k = f"{sym}:{key}:{et_now().date()}"
+    if k not in notes:
+        notes[k] = time.time()
+        run.notify(text)
+
+
+def _at_target(run, sym, p, bars):
+    """Target reached: sell 2/3 and keep 1/3 as a bonus when there is no dilution danger and buyers are strong."""
+    danger = _danger(run.st, sym)
+    if danger or not _momentum(bars):
+        why = f"🎯 הגיע ליעד – מוכר הכול ({esc(danger) if danger else 'המומנטום נחלש'})"
+        return _sell(run, sym, p["shares"], p["target"], why)
+    part = int(p["shares"] * config.TRADE_TAKE_PART)
+    p["runner"] = True
+    p["stop"] = max(p["stop"], _grid(p["entry"] + config.TRADE_RUNNER_LOCK_R * p["R"], p["entry"], False))
+    _sell(run, sym, part, p["target"], "🎯 הגיע ליעד – מוכר 2/3, אין סכנת דילול והקונים חזקים: 1/3 נשאר כבונוס")
+    return False
+
+
+def _heavy_selling(run, sym, p, bars, sell):
+    """Big volume while the price drops: find out why before deciding. Returns True when we sold."""
+    win = config.TRADE_DUMP_BARS
+    if len(bars) < 3 * win:
+        return False
+    recent, before = bars[-win:], bars[:-win]
+    normal = sum(b["v"] for b in before) / len(before) * win
+    last = bars[-1]["c"]
+    drop = 1 - last / recent[0]["o"]
+    if not (normal and sum(b["v"] for b in recent) >= config.TRADE_DUMP_VOL_X * normal
+            and drop >= config.TRADE_DUMP_DROP):
+        return False
+    reasons = []
+    danger = _danger(run.st, sym, since=p["opened"] - config.TRADE_DIL_FLAG_DAYS * 86400)
+    if danger:
+        reasons.append(danger)
+    wall = _seller_wall(bars)
+    if wall:
+        reasons.append(f"מוכר גדול יושב על ${fmt_price(wall)} (כנראה מדלל)")
+    if last < p["ref"]:
+        reasons.append("המחיר ירד מתחת למחיר שלפני החדשה – החדשה 'נמחקה'")
+    if reasons:
+        _sell(run, sym, p["shares"], sell, "🔴 מכירה כבדה – נורה אדומה: " + "; ".join(reasons))
+        return True
+    _note(run, sym, "dump", f"ℹ️ <b>{sym}</b>: מכירה כבדה (ירידה של {drop * 100:.0f}%), אבל אין דילול, "
+                            f"אין חדשה רעה ואין מוכר שיושב על מחיר – נראה כמו מימוש רווחים. "
+                            f"נשאר בפנים, העצירה ב-${fmt_price(p['stop'])}.")
+    return False
 
 
 def _manage(run, sym, p):
@@ -249,46 +418,59 @@ def _manage(run, sym, p):
         t = tick(b["c"])
         if b["l"] <= p["stop"]:     # checked first: we do not know if the low or the high came first
             fill = min(p["stop"], b["o"]) - t
-            why = "העצירה הוזזה למחיר הקנייה ונפגעה – יציאה בלי הפסד" if p["be"] and p["stop"] <= p["entry"] + t \
-                else ("עצירה נגררת – נועל רווח" if p["stop"] > p["entry"] else "הגיע לנקודת העצירה")
+            if p["runner"]:
+                why = "בונוס: העצירה הנגררת נפגעה – הרווח נשמר"
+            elif p["be"] and p["stop"] <= p["entry"] + t:
+                why = "העצירה הוזזה למחיר הקנייה ונפגעה – יציאה בלי הפסד"
+            else:
+                why = "עצירה נגררת – נועל רווח" if p["stop"] > p["entry"] else "הגיע לנקודת העצירה"
             if b["o"] < p["stop"]:
                 why += " (המחיר קפץ מתחת לעצירה)"
-            return _close(run, sym, fill, why)
-        if b["h"] >= p["target"] + t:
-            return _close(run, sym, p["target"], "🎯 הגיע ליעד הרווח")
+            _sell(run, sym, p["shares"], fill, why)
+            return
+        if not p["runner"] and b["h"] >= p["target"] + t:
+            p["last"], p["last_t"] = b["c"], b["t"]
+            if _at_target(run, sym, p, [x for x in bars if x["t"] <= b["t"]]):
+                return
         p["high"] = max(p["high"], b["h"])
         p["last"], p["last_t"] = b["c"], b["t"]
         if p["high"] >= p["entry"] + p["R"] and p["stop"] < p["entry"] + t:
             p["stop"], p["be"] = _grid(p["entry"] + t, p["entry"], True), True   # sell fill = entry price
-        if p["high"] >= p["entry"] + config.TRADE_TRAIL_AFTER_R * p["R"]:
-            p["stop"] = max(p["stop"], _grid(p["high"] - p["R"], p["high"], False))
+        trail = config.TRADE_RUNNER_TRAIL_R if p["runner"] else 1.0
+        if p["runner"] or p["high"] >= p["entry"] + config.TRADE_TRAIL_AFTER_R * p["R"]:
+            p["stop"] = max(p["stop"], _grid(p["high"] - trail * p["R"], p["high"], False))
     if not bars:
         return
     last = bars[-1]["c"]
     sell = last - tick(last)
-    # dilution showed up after we bought
+    # dilution or bad news after we bought -> out at once
     if st["pt"]["dil"].get(sym, 0) > p["opened"]:
-        return _close(run, sym, sell, "🔴 זוהה דיווח על דילול / הנפקה – יציאה מיידית")
+        _sell(run, sym, p["shares"], sell, "🔴 זוהה דיווח על דילול / הנפקה – יציאה מיידית")
+        return
+    neg = st["pt"]["neg"].get(sym)
+    if neg and neg[0] > p["opened"]:
+        _sell(run, sym, p["shares"], sell, f"🔴 חדשה שלילית ({neg[1]}) – יציאה מיידית")
+        return
     if time.time() - p.get("tso_chk", 0) > config.TRADE_TSO_CHECK_MIN * 60:
         p["tso_chk"] = time.time()
         st.get("dil", {}).pop(sym, None)            # force a fresh read
         d = dilution.summary(sym, st, str(now.date()))
         if d and p.get("tso0") and d["tso"] > p["tso0"] * (1 + config.DILUTION_ALERT_MIN):
-            return _close(run, sym, sell, f"🔴 נוספו מניות ({dilution.fmt(p['tso0'])} → {dilution.fmt(d['tso'])}) "
-                                          "– מדלל פעיל, יציאה מיידית")
-    # heavy selling: big volume while the price drops (often a diluter dumping shares)
-    win = config.TRADE_DUMP_BARS
-    if len(bars) >= 3 * win:
-        recent, before = bars[-win:], bars[:-win]
-        avg_v = sum(b["v"] for b in before) / len(before) * win
-        drop = 1 - last / recent[0]["o"]
-        if avg_v and sum(b["v"] for b in recent) >= config.TRADE_DUMP_VOL_X * avg_v and drop >= config.TRADE_DUMP_DROP:
-            return _close(run, sym, sell, f"🔴 מכירה כבדה: ירידה של {drop * 100:.0f}% בווליום חריג – כנראה מדלל מוכר")
-    # end of day: never keep a stock overnight unless it is clearly working
-    if _mins(now) >= config.TRADE_EOD_MIN and last < p["entry"] + config.TRADE_OVERNIGHT_MIN_R * p["R"]:
-        return _close(run, sym, sell, "סוף יום: המניה לא התקדמה מספיק – לא משאיר אותה ללילה")
-    if time.time() - p["opened"] > config.TRADE_MAX_DAYS * 86400 and _mins(now) >= config.TRADE_EOD_MIN:
-        return _close(run, sym, sell, f"מוחזקת יותר מ-{config.TRADE_MAX_DAYS} ימים – יציאה")
+            _sell(run, sym, p["shares"], sell, f"🔴 נוספו מניות ({dilution.fmt(p['tso0'])} → "
+                                               f"{dilution.fmt(d['tso'])}) – מדלל פעיל, יציאה מיידית")
+            return
+    if _heavy_selling(run, sym, p, bars, sell):
+        return
+    # end of day: make sure we are not too big for the buyers that are there
+    if _mins(now) >= config.TRADE_EOD_MIN:
+        vol = sum(b["v"] for b in bars)
+        cap = int(vol * config.TRADE_EXIT_LIQ_SHARE)
+        if vol and p["shares"] > cap > 0 and p["shares"] - cap >= p["shares"] * 0.2:
+            if _sell(run, sym, p["shares"] - cap, sell, "המסחר במניה התייבש – מקטין כדי שיהיה למי למכור"):
+                return
+    # a stock that stands still is normal: hold while there is no danger, up to the maximum
+    if _days(p["opened"]) > config.TRADE_MAX_DAYS and _mins(now) >= config.TRADE_EOD_MIN:
+        _sell(run, sym, p["shares"], sell, f"מוחזקת יותר מ-{config.TRADE_MAX_DAYS} ימים בלי תזוזה – משחרר את הכסף")
 
 
 # ---------- reports ----------
@@ -299,12 +481,12 @@ def _trades_since(pt, ts):
 
 def _stats(trades):
     if not trades:
-        return "אין עסקאות שנסגרו."
+        return "אין מכירות."
     wins = [x for x in trades if x["pnl"] > 0.005]
     pnl = sum(x["pnl"] for x in trades)
     avg_r = sum(x["r"] for x in trades) / len(trades)
-    return (f"עסקאות שנסגרו: {len(trades)} · מוצלחות: {len(wins)} ({len(wins) / len(trades) * 100:.0f}%)\n"
-            f"רווח/הפסד: {'+' if pnl >= 0 else '−'}${abs(pnl):,.2f} · ממוצע לעסקה: {avg_r:+.2f}R")
+    return (f"מכירות: {len(trades)} · ברווח: {len(wins)} ({len(wins) / len(trades) * 100:.0f}%)\n"
+            f"רווח/הפסד אחרי עמלות: {'+' if pnl >= 0 else '−'}${abs(pnl):,.2f} · ממוצע: {avg_r:+.2f}R")
 
 
 def portfolio_text(st):
@@ -312,14 +494,15 @@ def portfolio_text(st):
     eq = equity(pt)
     lines = ["💼 <b>התיק הווירטואלי</b>",
              f"שווי: ${eq:,.0f} ({(eq / pt['start'] - 1) * 100:+.1f}% מההתחלה, ${pt['start']:,.0f})",
-             f"מזומן: ${pt['cash']:,.0f}"]
+             f"מזומן: ${pt['cash']:,.0f} · עמלות ששולמו: ${pt['fees']:,.2f}"]
     if pt["pos"]:
         lines.append("\n<b>מניות פתוחות:</b>")
         for s, p in pt["pos"].items():
             ch = (p.get("last", p["entry"]) / p["entry"] - 1) * 100
             lines.append(f"• <b>{s}</b> {p['shares']:,} × ${fmt_price(p['entry'])} · עכשיו ${fmt_price(p.get('last'))} "
-                         f"({ch:+.0f}%) · 🎯 ${fmt_price(p['target'])} · 🛑 ${fmt_price(p['stop'])}"
-                         + (" (בלי הפסד)" if p["stop"] >= p["entry"] else ""))
+                         f"({ch:+.0f}%) · " + ("בונוס · " if p["runner"] else f"🎯 ${fmt_price(p['target'])} · ")
+                         + f"🛑 ${fmt_price(p['stop'])}" + (" (בלי הפסד)" if p["stop"] >= p["entry"] else "")
+                         + f" · {_days(p['opened']):.0f} ימים")
     else:
         lines.append("אין מניות פתוחות.")
     if pt["cands"]:
@@ -333,12 +516,13 @@ def portfolio_text(st):
 def trades_text(st):
     pt = init(st)
     if not pt["closed"]:
-        return "עוד אין עסקאות שנסגרו."
-    lines = ["📒 <b>10 העסקאות האחרונות</b>"]
+        return "עוד אין מכירות."
+    lines = ["📒 <b>10 המכירות האחרונות</b>"]
     for x in pt["closed"][-10:][::-1]:
         when = datetime.fromtimestamp(x["closed"], ET).strftime("%d/%m")
-        lines.append(f"{when} <b>{x['sym']}</b> ${fmt_price(x['entry'])}→${fmt_price(x['exit'])} "
-                     f"{'+' if x['pnl'] >= 0 else '−'}${abs(x['pnl']):,.2f} ({x['r']:+.1f}R) · {esc(x['why'])}")
+        lines.append(f"{when} <b>{x['sym']}</b>{' (חלקית)' if x.get('part') else ''} ${fmt_price(x['entry'])}→"
+                     f"${fmt_price(x['exit'])} {'+' if x['pnl'] >= 0 else '−'}${abs(x['pnl']):,.2f} "
+                     f"({x['r']:+.1f}R) · {esc(x['why'])}")
     return "\n".join(lines)
 
 
@@ -351,10 +535,13 @@ def _reports(run):
     today = _trades_since(pt, start_of_day)
     skips = pt["skips"].get(day, [])
     if today or pt["pos"] or skips:
-        lines = [f"📊 <b>סיכום יום – מסחר וירטואלי</b>", _stats(today),
+        lines = ["📊 <b>סיכום יום – מסחר וירטואלי</b>", _stats(today),
                  f"שווי התיק: ${equity(pt):,.0f} ({(equity(pt) / pt['start'] - 1) * 100:+.1f}% מההתחלה)"]
         if pt["pos"]:
-            lines.append("נשארו פתוחות ללילה: " + ", ".join(pt["pos"]))
+            lines.append("\n<b>מוחזקות:</b>")
+            for s, p in pt["pos"].items():
+                ch = (p.get("last", p["entry"]) / p["entry"] - 1) * 100
+                lines.append(f"• {s} {ch:+.0f}% · {_days(p['opened']):.0f} ימים" + (" · בונוס" if p["runner"] else ""))
         if skips:
             lines.append("\n<b>חדשות שלא נקנו:</b>")
             lines += [f"• {s} – {esc(w)}" for s, w in skips[:8]]
@@ -379,14 +566,16 @@ def cycle(run):
     pt = init(st)
     _bars.clear()
     now = et_now()
-    pt["dil"] = {s: t for s, t in pt["dil"].items() if time.time() - t < 30 * 86400}
+    day = str(now.date())
+    pt["dil"] = {s: t for s, t in pt["dil"].items() if _days(t) < 30}
+    pt["neg"] = {s: v for s, v in pt["neg"].items() if _days(v[0]) < 30}
+    pt["notes"] = {k: v for k, v in pt["notes"].items() if _days(v) < 2}
     if _session(now) == "open":
         for sym in list(pt["pos"]):
             try:
                 _manage(run, sym, pt["pos"][sym])
             except Exception as e:
                 log(f"trader: manage failed ({net.short_err(e)})")
-        day = str(now.date())
         for sym in list(pt["cands"]):
             c = pt["cands"][sym]
             if c["deadline"] is None:
@@ -406,9 +595,55 @@ def cycle(run):
         # news that came after the close waits for the next session; expired / old ones are dropped
         for sym, c in list(pt["cands"].items()):
             if c["deadline"] and time.time() > c["deadline"]:
-                pt["skips"].setdefault(str(now.date()), []).append(
-                    [sym, c.get("why") or "לא נמצאה נקודת כניסה טובה"])
+                pt["skips"].setdefault(day, []).append([sym, c.get("why") or "לא נמצאה נקודת כניסה טובה"])
                 pt["cands"].pop(sym, None)
-            elif time.time() - c["ts"] > 3 * 86400:
+            elif _days(c["ts"]) > 3:
                 pt["cands"].pop(sym, None)
+    hist = pt["eq_hist"]
+    if not hist or time.time() - hist[-1][0] >= config.TRADE_EQ_EVERY_MIN * 60:
+        hist.append([int(time.time()), round(equity(pt), 2)])
+        del hist[:-2000]
     _reports(run)
+
+
+# ---------- data for the trading screen (dashboard) ----------
+
+CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=5m&range=5d"
+_charts = {}   # ticker -> (time, bars); 5-minute bars of the last 5 days for the screen
+
+
+def chart_bars(sym):
+    hit = _charts.get(sym)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    out = []
+    try:
+        r = net.get(CHART_URL.format(sym), timeout=15).json()["chart"]["result"][0]
+        q = r["indicators"]["quote"][0]
+        for i, t in enumerate(r.get("timestamp") or []):
+            row = [q[k][i] for k in ("open", "high", "low", "close")]
+            if None not in row:
+                out.append([t] + [round(x, 6) for x in row] + [q["volume"][i] or 0])
+    except Exception as e:
+        log(f"trader: chart failed ({net.short_err(e)})")
+    _charts[sym] = (time.time(), out)
+    return out
+
+
+def dashboard(st):
+    """Everything the trading screen shows (it is stored encrypted next to the bot's memory)."""
+    pt = init(st)
+    pos = []
+    for s, p in pt["pos"].items():
+        bars = chart_bars(s)
+        pos.append({"sym": s, "shares": p["shares"], "shares0": p.get("shares0", p["shares"]), "entry": p["entry"],
+                    "last": p.get("last"), "stop": p["stop"], "target": p["target"], "high": p["high"],
+                    "opened": p["opened"], "cat": p["cat"], "score": p["score"], "runner": p["runner"],
+                    "be": p["be"], "ref": p.get("ref"), "basis": round(p["basis"], 2), "title": p.get("title", ""),
+                    "url": p.get("url", ""), "bars": bars})
+    cands = [{"sym": s, "cat": c["cat"], "score": c["score"], "why": c.get("why", ""), "ts": c["ts"],
+              "title": c.get("title", ""), "url": c.get("url", "")} for s, c in pt["cands"].items()]
+    return {"v": 1, "updated": int(time.time()), "start": pt["start"], "cash": round(pt["cash"], 2),
+            "equity": round(equity(pt), 2), "fees": round(pt["fees"], 2), "pos": pos, "cands": cands,
+            "closed": pt["closed"][-150:], "skips": pt["skips"], "eq": pt["eq_hist"][-1500:],
+            "fee": config.TRADE_FEE, "rr": config.TRADE_RR}

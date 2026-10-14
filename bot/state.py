@@ -3,11 +3,14 @@
 In the cloud it is stored encrypted (state.bin) on the `state` branch, because the repo is public.
 Locally, without STATE_KEY, it is a plain JSON file for testing.
 """
+import base64
+import hashlib
 import json
 import os
 import time
 
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from . import config
 
@@ -72,3 +75,32 @@ def save(st):
 def prune(st):
     cutoff = time.time() - config.SEEN_TTL_DAYS * 86400
     st["seen"] = {k: v for k, v in st["seen"].items() if v >= cutoff}
+
+
+# ---------- trading screen data (dashboard) ----------
+# Stored next to state.bin; the web page decrypts it in the browser with a key that is only in the link
+# Reuven gets from his bot (the part after # never leaves the browser).
+
+DASH_ENC = "dash.bin"
+DASH_PLAIN = "dash.local.json"
+
+
+def dash_key():
+    return hashlib.sha256((config.STATE_KEY + "|dash").encode()).digest() if config.STATE_KEY else b""
+
+
+def dash_url():
+    k = base64.urlsafe_b64encode(dash_key()).decode().rstrip("=")
+    return f"{config.DASH_PAGE}#k={k}"
+
+
+def save_dash(data):
+    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+    if config.STATE_KEY:
+        nonce = os.urandom(12)
+        path, raw = DASH_ENC, base64.b64encode(nonce + AESGCM(dash_key()).encrypt(nonce, raw, None))
+    else:
+        path = DASH_PLAIN
+    with open(path + ".tmp", "wb") as f:
+        f.write(raw)
+    os.replace(path + ".tmp", path)

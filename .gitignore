@@ -7,3 +7,5 @@ state.local.json
 .state_key
 dryrun*.txt
 CLAUDE.md
+dash.bin
+dash.local.json

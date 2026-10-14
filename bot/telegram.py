@@ -22,11 +22,22 @@ def call(method, **params):
     return data["result"]
 
 
-def send(chat_id, text):
+def send(chat_id, text, markup=None):
     while text:
         part, text = text[:MAX_LEN], text[MAX_LEN:]
+        extra = {"reply_markup": markup} if markup and not text else {}
         call("sendMessage", chat_id=chat_id, text=part, parse_mode="HTML",
-             link_preview_options={"is_disabled": True})
+             link_preview_options={"is_disabled": True}, **extra)
+
+
+def web_app_button(text, url):
+    """Inline keyboard: open the page inside Telegram, or in the phone's browser."""
+    return {"inline_keyboard": [[{"text": text, "web_app": {"url": url}}],
+                                [{"text": "🌐 לפתוח בדפדפן", "url": url}]]}
+
+
+def set_menu_button(chat_id, text, url):
+    call("setChatMenuButton", chat_id=chat_id, menu_button={"type": "web_app", "text": text, "web_app": {"url": url}})
 
 
 def updates(offset):

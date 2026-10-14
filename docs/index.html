@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>מסך מסחר OTC</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root{--bg:#0b0e14;--panel:#131722;--line:#232a38;--text:#d7dce5;--mute:#8a93a6;--up:#26a69a;--down:#ef5350;--acc:#4c8dff;--warn:#f0b429}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,"Segoe UI",Arial,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:10px}
+header h1{font-size:16px;margin:0;flex:1}
+.badge{font-size:11px;padding:2px 8px;border-radius:10px;background:#2b3245;color:var(--mute)}
+.badge.live{background:#123d34;color:#5ee0c4}
+main{max-width:1100px;margin:0 auto;padding:12px 16px 40px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.kpi .l{color:var(--mute);font-size:12px}.kpi .v{font-size:20px;font-weight:600;direction:ltr;text-align:right}
+.kpi .s{font-size:12px;direction:ltr;text-align:right}
+.up{color:var(--up)}.down{color:var(--down)}.mute{color:var(--mute)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:12px;overflow:hidden}
+section h2{font-size:14px;margin:0;padding:10px 12px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+section h2 .c{color:var(--mute);font-weight:400}
+.chart{height:220px}
+.tabs{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:#1c2230;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap;font:inherit}
+.tab.on{border-color:var(--acc);color:#fff}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--mute);font-weight:500;font-size:12px;background:#161b26}
+td.n{direction:ltr;text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
+.why{white-space:normal;min-width:200px;color:var(--mute);font-size:12px}
+.posinfo{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;padding:10px 12px;border-top:1px solid var(--line)}
+.posinfo div{font-size:12px;color:var(--mute)}.posinfo b{display:block;color:var(--text);font-size:14px;direction:ltr;text-align:right}
+.empty{padding:16px 12px;color:var(--mute)}
+.err{margin:40px auto;max-width:420px;text-align:center;color:var(--mute)}
+.pill{font-size:11px;padding:1px 6px;border-radius:8px;background:#2b3245}
+.pill.g{background:#123d34;color:#5ee0c4}.pill.r{background:#3d1717;color:#ff8a80}.pill.y{background:#3d3212;color:var(--warn)}
+a{color:var(--acc)}
+footer{color:var(--mute);font-size:12px;text-align:center;padding:8px}
+</style>
+</head>
+<body>
+<header><h1>📈 מסך מסחר OTC <span class="mute" style="font-weight:400;font-size:12px">· כסף וירטואלי</span></h1>
+<span id="upd" class="badge">טוען…</span></header>
+<main id="app"></main>
+<footer>הסוכן קונה ומוכר לפי מחירי Yahoo של כל דקה · קנייה צעד מחיר מעל המחיר האחרון, מכירה צעד מתחת · עמלה <span id="fee"></span> לכל פעולה</footer>
+<script>
+const RAW = "https://raw.githubusercontent.com/alfandari123/otc-alerts/state/dash.bin";
+const API = "https://api.github.com/repos/alfandari123/otc-alerts/contents/dash.bin?ref=state";
+const $ = s => document.querySelector(s);
+const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
+const key = (new URLSearchParams(location.hash.slice(1))).get("k");
+let data = null, sel = null, charts = [];
+
+function b64(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
+async function load(){
+  let txt;
+  try { const r = await fetch(RAW + "?t=" + Date.now(), {cache:"no-store"}); if (!r.ok) throw 0; txt = await r.text(); }
+  catch(e){ const r = await fetch(API, {headers:{Accept:"application/vnd.github.raw"}}); txt = await r.text(); }
+  const all = b64(txt.trim()), k = await crypto.subtle.importKey("raw", b64(key), "AES-GCM", false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({name:"AES-GCM", iv:all.slice(0,12)}, k, all.slice(12));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+const px = p => p == null ? "?" : (p < 1 ? (+p).toFixed(6).replace(/0+$/,"").replace(/\.$/,"") : (+p).toFixed(2));
+const usd = (x, sign) => (sign && x > 0 ? "+" : x < 0 ? "−" : "") + "$" + Math.abs(x).toLocaleString("en-US",{maximumFractionDigits: Math.abs(x) < 100 ? 2 : 0});
+const pct = x => (x > 0 ? "+" : "") + x.toFixed(1) + "%";
+const cls = x => x > 0.005 ? "up" : x < -0.005 ? "down" : "";
+const d8 = ts => new Date(ts*1000).toLocaleString("he-IL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+const days = ts => ((Date.now()/1000 - ts)/86400);
+const esc = s => (s||"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const tz = -new Date().getTimezoneOffset()*60; // charts show the phone's local time
+
+function chart(el, h){
+  const c = LightweightCharts.createChart(el, {height:h, layout:{background:{color:"#131722"}, textColor:"#8a93a6"},
+    grid:{vertLines:{color:"#1c2230"}, horzLines:{color:"#1c2230"}}, rightPriceScale:{borderColor:"#232a38"},
+    timeScale:{borderColor:"#232a38", timeVisible:true, secondsVisible:false}, crosshair:{mode:0}, autoSize:true});
+  charts.push(c); return c;
+}
+
+function render(){
+  charts.forEach(c => c.remove()); charts = [];
+  const d = data, open = d.pos.reduce((a,p) => a + p.shares*((p.last||p.entry) - p.entry), 0);
+  const closed = d.closed, wins = closed.filter(x => x.pnl > 0.005), real = closed.reduce((a,x) => a + x.pnl, 0);
+  const tot = d.equity - d.start;
+  $("#fee").textContent = "$" + d.fee;
+  let h = `<div class="kpis">
+   <div class="kpi"><div class="l">שווי התיק</div><div class="v">${usd(d.equity)}</div><div class="s ${cls(tot)}">${usd(tot,1)} (${pct(tot/d.start*100)})</div></div>
+   <div class="kpi"><div class="l">מזומן</div><div class="v">${usd(d.cash)}</div><div class="s mute">התחלה ${usd(d.start)}</div></div>
+   <div class="kpi"><div class="l">רווח/הפסד פתוח</div><div class="v ${cls(open)}">${usd(open,1)}</div><div class="s mute">${d.pos.length} פוזיציות</div></div>
+   <div class="kpi"><div class="l">רווח/הפסד ממומש</div><div class="v ${cls(real)}">${usd(real,1)}</div><div class="s mute">עמלות ${usd(d.fees)}</div></div>
+   <div class="kpi"><div class="l">אחוז הצלחה</div><div class="v">${closed.length ? Math.round(wins.length/closed.length*100)+"%" : "—"}</div><div class="s mute">${closed.length} מכירות</div></div>
+  </div>
+  <section><h2>שווי התיק לאורך זמן</h2><div id="eq" class="chart"></div></section>
+  <section><h2>פוזיציות פתוחות <span class="c">${d.pos.length}</span></h2>`;
+  if (d.pos.length){
+    if (!d.pos.find(p => p.sym === sel)) sel = d.pos[0].sym;
+    h += `<div class="tabs">` + d.pos.map(p => { const ch = ((p.last||p.entry)/p.entry-1)*100;
+      return `<button class="tab ${p.sym===sel?"on":""}" data-s="${p.sym}">${p.sym} <span class="${cls(ch)}">${pct(ch)}</span></button>`;}).join("") + `</div>`;
+    const p = d.pos.find(p => p.sym === sel), ch = ((p.last||p.entry)/p.entry-1)*100, pl = p.shares*((p.last||p.entry)-p.entry);
+    h += `<div id="pc" class="chart" style="height:280px"></div><div class="posinfo">
+      <div>מניות<b>${p.shares.toLocaleString()}${p.shares0 !== p.shares ? " / "+p.shares0.toLocaleString() : ""}</b></div>
+      <div>קנייה<b>$${px(p.entry)}</b></div><div>עכשיו<b class="${cls(ch)}">$${px(p.last)} (${pct(ch)})</b></div>
+      <div>רווח/הפסד<b class="${cls(pl)}">${usd(pl,1)}</b></div>
+      <div>${p.runner ? "בונוס – ללא יעד" : "🎯 יעד"}<b>${p.runner ? "—" : "$"+px(p.target)}</b></div>
+      <div>🛑 עצירה<b>$${px(p.stop)}</b></div>
+      <div>מצב<b style="direction:rtl">${p.runner ? '<span class="pill g">בונוס 1/3</span>' : p.be ? '<span class="pill g">בלי הפסד</span>' : '<span class="pill y">בסיכון</span>'}</b></div>
+      <div>מוחזקת<b>${days(p.opened).toFixed(1)} ימים</b></div>
+      <div style="grid-column:1/-1">סיבה<b style="direction:rtl;font-size:13px">${esc(p.cat)} · ציון ${p.score}/10 ${p.url ? `· <a href="${esc(p.url)}" target="_blank">לחדשה</a>` : ""}</b></div></div>`;
+  } else h += `<div class="empty">אין פוזיציות פתוחות כרגע.</div>`;
+  h += `</section>
+  <section><h2>במעקב לקנייה <span class="c">${d.cands.length}</span></h2>` + (d.cands.length ? `<div class="wrap"><table><tr><th>מניה</th><th>חדשה</th><th>ציון</th><th>מצב</th></tr>` +
+    d.cands.map(c => `<tr><td><b>${c.sym}</b></td><td class="why">${c.url ? `<a href="${esc(c.url)}" target="_blank">${esc(c.cat)}</a>` : esc(c.cat)}</td><td class="n">${c.score}</td><td class="why">${esc(c.why) || "בודק…"}</td></tr>`).join("") + `</table></div>`
+    : `<div class="empty">אין מניות במעקב כרגע. כשתגיע חדשה חיובית חזקה היא תופיע כאן.</div>`) + `</section>
+  <section><h2>היסטוריית מכירות <span class="c">${closed.length}</span></h2>` + (closed.length ? `<div class="wrap"><table><tr><th>תאריך</th><th>מניה</th><th>מניות</th><th>קנייה</th><th>מכירה</th><th>שינוי</th><th>רווח/הפסד</th><th>R</th><th>סיבה</th></tr>` +
+    closed.slice().reverse().map(x => { const c = (x.exit/x.entry-1)*100; return `<tr><td>${d8(x.closed)}</td><td><b>${x.sym}</b>${x.part ? ' <span class="pill">חלקית</span>' : ""}</td><td class="n">${x.shares.toLocaleString()}</td><td class="n">$${px(x.entry)}</td><td class="n">$${px(x.exit)}</td><td class="n ${cls(c)}">${pct(c)}</td><td class="n ${cls(x.pnl)}">${usd(x.pnl,1)}</td><td class="n ${cls(x.r)}">${x.r>0?"+":""}${x.r.toFixed(1)}</td><td class="why">${esc(x.why)}</td></tr>`;}).join("") + `</table></div>`
+    : `<div class="empty">עוד אין מכירות.</div>`) + `</section>`;
+  const sk = Object.entries(d.skips||{}).flatMap(([day, l]) => l.map(x => [day, ...x]));
+  h += `<section><h2>חדשות שלא נקנו היום <span class="c">${sk.length}</span></h2>` + (sk.length ? `<div class="wrap"><table><tr><th>מניה</th><th>למה לא</th></tr>` +
+    sk.map(x => `<tr><td><b>${x[1]}</b></td><td class="why">${esc(x[2])}</td></tr>`).join("") + `</table></div>` : `<div class="empty">אין.</div>`) + `</section>`;
+  $("#app").innerHTML = h;
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { sel = b.dataset.s; render(); });
+
+  const ec = chart($("#eq"), 220), es = ec.addAreaSeries({lineColor:"#4c8dff", topColor:"rgba(76,141,255,.35)", bottomColor:"rgba(76,141,255,0)", lineWidth:2});
+  const eq = d.eq.length ? d.eq : [[d.updated, d.equity]];
+  es.setData(eq.map(([t,v]) => ({time:t+tz, value:v})));
+  es.createPriceLine({price:d.start, color:"#8a93a6", lineStyle:2, lineWidth:1, axisLabelVisible:true, title:"התחלה"});
+  ec.timeScale().fitContent();
+  const p = d.pos.find(p => p.sym === sel);
+  if (p){
+    const c = chart($("#pc"), 280), fmt = {type:"price", precision: p.entry < 1 ? 4 : 2, minMove: p.entry < 1 ? 0.0001 : 0.01};
+    const cs = c.addCandlestickSeries({upColor:"#26a69a", downColor:"#ef5350", borderVisible:false, wickUpColor:"#26a69a", wickDownColor:"#ef5350", priceFormat:fmt,
+      autoscaleInfoProvider: orig => { const r = orig(); if (!r) return r; const lv = [p.stop, p.runner ? p.stop : p.target];
+        r.priceRange.minValue = Math.min(r.priceRange.minValue, ...lv); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, ...lv); return r; }});
+    const bars = p.bars.length ? p.bars : [[d.updated, p.last, p.last, p.last, p.last, 0]];
+    cs.setData(bars.map(b => ({time:b[0]+tz, open:b[1], high:b[2], low:b[3], close:b[4]})));
+    const vs = c.addHistogramSeries({priceScaleId:"v", priceFormat:{type:"volume"}, color:"rgba(76,141,255,.35)"});
+    c.priceScale("v").applyOptions({scaleMargins:{top:.8, bottom:0}});
+    vs.setData(bars.map(b => ({time:b[0]+tz, value:b[5]})));
+    cs.createPriceLine({price:p.entry, color:"#4c8dff", lineWidth:1, lineStyle:0, title:"קנייה"});
+    cs.createPriceLine({price:p.stop, color:"#ef5350", lineWidth:1, lineStyle:2, title:"עצירה"});
+    if (!p.runner) cs.createPriceLine({price:p.target, color:"#26a69a", lineWidth:1, lineStyle:2, title:"יעד"});
+    if (p.ref) cs.createPriceLine({price:p.ref, color:"#8a93a6", lineWidth:1, lineStyle:1, title:"לפני החדשה"});
+    c.timeScale().fitContent();
+  }
+  const age = Math.round((Date.now()/1000 - d.updated)/60), u = $("#upd");
+  u.textContent = age <= 10 ? "עודכן לפני " + age + " דק׳" : "עודכן " + d8(d.updated);
+  u.className = "badge" + (age <= 10 ? " live" : "");
+}
+
+async function tick(){
+  try { data = await load(); render(); }
+  catch(e){ if (!data) $("#app").innerHTML = `<div class="err">לא הצלחתי לפתוח את הנתונים.<br>פתח את המסך מהכפתור בבוט בטלגרם (פקודה /dashboard).</div>`; $("#upd").textContent = "שגיאה"; }
+}
+if (!key) { $("#app").innerHTML = `<div class="err">🔒 המסך פרטי.<br>פתח אותו מהכפתור בבוט בטלגרם (פקודה /dashboard).</div>`; $("#upd").textContent = "נעול"; }
+else { tick(); setInterval(tick, 60000); }
+</script>
+</body>
+</html>

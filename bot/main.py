@@ -32,20 +32,27 @@ HELP = """🤖 <b>בוט התראות OTC</b>
 /status – מצב הבוט והמקורות
 /test – הודעת ניסיון
 /portfolio – התיק הווירטואלי של סוכן המסחר
-/trades – 10 העסקאות האחרונות של הסוכן
+/trades – 10 המכירות האחרונות של הסוכן
+/dashboard – מסך המסחר (גרפים, פוזיציות, היסטוריה)
 /help – העזרה הזו
-אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code>
+אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code> · <code>מסך</code>
 
-<b>סוכן מסחר (כסף וירטואלי, $5,000):</b>
-קונה אחרי חדשה חיובית חזקה רק ביחס סיכוי-סיכון של 1:3 לפחות, לא נוגע במדללים פעילים,
-ומזיז את העצירה למחיר הקנייה ברגע שהרווח שווה לסיכון. 🛒 קנייה · ✅ מכירה ברווח · 🔻 מכירה בהפסד
+<b>סוכן מסחר (כסף וירטואלי, $5,000, עמלת Schwab $6.95 לפעולה):</b>
+קונה אחרי חדשה חיובית חזקה רק ביחס 1:3 לפחות אחרי עמלות, לא נוגע במדללים פעילים,
+מזיז את העצירה למחיר הקנייה כשהרווח שווה לסיכון, וביעד מוכר 2/3 ומשאיר 1/3 כבונוס.
+🛒 קנייה · ✅ מכירה ברווח · 🔻 מכירה בהפסד · ℹ️ הסבר על מכירה כבדה
 
 <b>סימנים בהתראות:</b>
 🟢 חדשה חיובית · 🔴 חדשה שלילית · ⚪ ניטרלית · 📈 ווליום חריג · ⭐ מניה מהרשימה שלך
 
 ⏱️ הבוט בודק כל 5-15 דקות, ולכן גם התשובה לפקודה מגיעה תוך כמה דקות."""
 
-WELCOME = "👋 שלום! הבוט מחובר אליך, ומעכשיו הוא ישלח לך התראות.\n\n"
+DASH_TEXT = """📈 <b>מסך המסחר של הסוכן</b>
+פוזיציות פתוחות עם גרף, יעד ועצירה · שווי התיק לאורך זמן · היסטוריית עסקאות · מניות במעקב.
+מתעדכן כל כמה דקות. הקישור אישי שלך – אל תעביר אותו הלאה.
+(יש גם כפתור קבוע ליד תיבת ההודעות.)"""
+
+WELCOME ="👋 שלום! הבוט מחובר אליך, ומעכשיו הוא ישלח לך התראות.\n\n"
 
 SAMPLE = """🧪 <b>הודעת ניסיון</b> – כך תיראה התראה:
 
@@ -144,6 +151,8 @@ def command(st, text):
         return trader.portfolio_text(st)
     if cmd in ("/trades", "trades", "עסקאות"):
         return trader.trades_text(st)
+    if cmd in ("/dashboard", "/screen", "dashboard", "מסך"):
+        return DASH_TEXT, telegram.web_app_button("📈 מסך מסחר", state.dash_url())
     if cmd in ("/test", "test", "בדיקה"):
         return SAMPLE
     if cmd in ("/start", "/help", "help", "עזרה"):
@@ -174,10 +183,24 @@ def handle_commands(run):
             continue
         else:
             reply = command(st, text)
+        markup = None
+        if isinstance(reply, tuple):
+            reply, markup = reply
         try:
-            telegram.send(chat["id"], reply)
+            telegram.send(chat["id"], reply, markup)
         except Exception as e:
             log(f"Telegram reply failed: {short_err(e)}")
+
+
+def menu_button(st):
+    """Once: a 'trading screen' button next to the message box in the owner's chat."""
+    if st.get("menu_v") == 1 or not (st["owner"] and config.TELEGRAM_TOKEN and config.STATE_KEY):
+        return
+    try:
+        telegram.set_menu_button(st["owner"], "📈 מסך מסחר", state.dash_url())
+        st["menu_v"] = 1
+    except Exception as e:
+        log(f"menu button failed: {short_err(e)}")
 
 
 # ---------- Health of the data sources ----------
@@ -569,6 +592,7 @@ def cycle(st, args):
     items = []
     try:
         handle_commands(run)
+        menu_button(st)
         items = collect(run)
         process(run, items)
         volume_check(run, force=args.force_vol)
@@ -588,6 +612,10 @@ def cycle(st, args):
         st["runs"] += 1
         st["sent"]["n"] += run.sent
         state.save(st)
+        try:
+            state.save_dash(trader.dashboard(st))
+        except Exception as e:
+            log(f"dashboard save failed: {short_err(e)}")
     log(f"done: {len(items)} items, {run.sent} alerts, {ai.calls} AI calls, {time.time() - run.start:.0f}s")
 
 

@@ -76,9 +76,11 @@ jobs:
           TOKEN: ${{ github.token }}
         run: |
           [ -f state.bin ] || exit 0
-          mkdir -p /tmp/st && cp state.bin /tmp/st/ && cd /tmp/st
+          mkdir -p /tmp/st && cp state.bin /tmp/st/
+          [ -f dash.bin ] && cp dash.bin /tmp/st/   # encrypted data for the trading screen
+          cd /tmp/st
           git init -q -b state
-          git add state.bin
+          git add state.bin $( [ -f dash.bin ] && echo dash.bin )
           git -c user.name="otc-alerts-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "state"
           git push -q -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git" state
