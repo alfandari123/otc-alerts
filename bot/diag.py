@@ -117,9 +117,35 @@ def dil():
             print(f"DIL SEC {sym}: ERROR {type(e).__name__} {e}")
 
 
+def ins():
+    """Insider data (Form 4 / 144) for a few OTC SEC filers - prints counts only (the logs are public)."""
+    from . import insiders
+    from .sources import sec
+    rows = [r for r in sec._get(sec.TICKERS).json()["data"] if r[3] == "OTC"]
+    found = 0
+    for _cik, _name, sym, _ex in rows[:300]:
+        try:
+            data = insiders.fetch(sym)
+        except Exception as e:
+            print("INS error", type(e).__name__, e)
+            continue
+        if data and (data["tx"] or data["f144"]):
+            found += 1
+            s = insiders.summary(data, days=90)
+            codes = sorted({t["code"] for t in data["tx"]})
+            print(f"INS #{found}: {len(data['tx'])} tx, codes {codes}, buy ${s['buy']:,.0f}, sell ${s['sell']:,.0f}, "
+                  f"conv {s['conv_shares']:,.0f}, f144 {len(data['f144'])}, danger={bool(insiders.danger(data))}, "
+                  f"sample={ {k: v for k, v in data['tx'][0].items() if k not in ('owner',)} if data['tx'] else None}")
+        if found >= 5:
+            break
+    print("INS done, companies with insider filings:", found)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if "ins" in sys.argv:
+        return ins()
     if "prn" in sys.argv:
         return prn()
     if "dil" in sys.argv:
