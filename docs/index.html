@@ -169,6 +169,12 @@ function render(){
     const vs = c.addHistogramSeries({priceScaleId:"v", priceFormat:{type:"volume"}, color:"rgba(76,141,255,.35)"});
     c.priceScale("v").applyOptions({scaleMargins:{top:.8, bottom:0}});
     vs.setData(bars.map(b => ({time:b[0]+tz, value:b[5]})));
+    let day = "", pv = 0, vv = 0, ema = null; const vw = [], em = [], k = 2/(9+1);
+    bars.forEach(b => { const dd = new Date(b[0]*1000).toDateString(); if (dd !== day) { day = dd; pv = 0; vv = 0; }
+      pv += (b[2]+b[3]+b[4])/3 * b[5]; vv += b[5]; if (vv) vw.push({time:b[0]+tz, value:pv/vv});
+      ema = ema == null ? b[4] : b[4]*k + ema*(1-k); em.push({time:b[0]+tz, value:ema}); });
+    c.addLineSeries({color:"#f0b429", lineWidth:1, priceLineVisible:false, lastValueVisible:false, title:"VWAP", priceFormat:fmt}).setData(vw);
+    c.addLineSeries({color:"#c77dff", lineWidth:1, priceLineVisible:false, lastValueVisible:false, title:"EMA9", priceFormat:fmt}).setData(em);
     cs.createPriceLine({price:p.entry, color:"#4c8dff", lineWidth:1, lineStyle:0, title:"קנייה"});
     cs.createPriceLine({price:p.stop, color:"#ef5350", lineWidth:1, lineStyle:2, title:"עצירה"});
     if (!p.runner) cs.createPriceLine({price:p.target, color:"#26a69a", lineWidth:1, lineStyle:2, title:"יעד"});
@@ -243,6 +249,12 @@ function insight(){
   const bv = recent.filter(x => x.side === "buy").reduce((a,x) => a + x.s, 0), sv = recent.filter(x => x.side === "sell").reduce((a,x) => a + x.s, 0);
   if (bv + sv) out.push(`5 דקות אחרונות: <span class="buy">קונים ${bv.toLocaleString()}</span> מול <span class="sell">מוכרים ${sv.toLocaleString()}</span> (${Math.round(bv/(bv+sv)*100)}% קנייה)`);
   const b = live.book;
+  if (b && b.bids.length) {
+    const lv = [...new Set(b.bids.map(x => x.p).filter(Boolean))].sort((a,c) => c - a);
+    for (let i = 0; i + 1 < lv.length; i++) if (1 - lv[i+1]/lv[i] >= 0.25) {
+      out.push(`🕳️ חור בצד הקונים: אחרי $${px(lv[i])} הקונה הבא רק ב-$${px(lv[i+1])} (−${Math.round((1 - lv[i+1]/lv[i])*100)}%) – עצירה מתחת ל-$${px(lv[i])} עלולה להתבצע הרבה יותר נמוך`);
+      break; }
+  }
   if (b && b.asks.length) {
     const sizes = b.asks.map(x => x.s).sort((a,c) => a - c), med = sizes[Math.floor(sizes.length/2)] || 1;
     const wall = b.asks.slice(0, 6).find(x => x.s >= 5*med && x.s > 0);
@@ -251,6 +263,22 @@ function insight(){
     if (bs + as) out.push(`3 רמות ראשונות: <span class="buy">ביקוש ${bs.toLocaleString()}</span> מול <span class="sell">היצע ${as.toLocaleString()}</span>`);
   }
   return out;
+}
+function ladder(){
+  const b = live.book, l = live.l1; if (!b || !(b.bids.length || b.asks.length)) return "";
+  const ref = l.last || (b.asks[0] || b.bids[0]).p, t = ref < 1 ? 0.0001 : 0.01, dg = ref < 1 ? 4 : 2, key = p => (+p).toFixed(dg);
+  const bs = {}, as = {};
+  b.bids.forEach(x => bs[key(x.p)] = (bs[key(x.p)] || 0) + x.s); b.asks.forEach(x => as[key(x.p)] = (as[key(x.p)] || 0) + x.s);
+  const hi = (b.asks[0] ? b.asks[0].p : ref) + 8*t, lo = Math.max(t, (b.bids[0] ? b.bids[0].p : ref) - 8*t);
+  const pos = data && data.pos.find(p => p.sym === live.sym), mark = {};
+  if (pos) { mark[key(pos.entry)] = "קנייה"; mark[key(pos.stop)] = "🛑 עצירה"; if (!pos.runner) mark[key(pos.target)] = "🎯 יעד"; }
+  const rows = [];
+  for (let p = hi; p >= lo - t/2; p -= t) { const k = key(p), last = l.last && key(l.last) === k;
+    rows.push(`<tr style="${last ? "background:#26304a" : ""}"><td class="n b">${bs[k] ? bs[k].toLocaleString() : ""}</td>
+      <td class="n" style="font-weight:${last ? 700 : 400}">${k}</td><td class="n a">${as[k] ? as[k].toLocaleString() : ""}</td>
+      <td class="mute" style="font-size:11px">${mark[k] || ""}</td></tr>`); }
+  return `<h2 style="border-top:1px solid var(--line)">סולם מחירים <span class="c">כמו Active Trader · קונים | מחיר | מוכרים</span></h2>
+    <div class="wrap book" style="max-height:320px;overflow-y:auto"><table><tr><th>קונים</th><th>מחיר</th><th>מוכרים</th><th></th></tr>${rows.join("")}</table></div>`;
 }
 function renderLive(){
   const el = $("#liveBody"); if (!el) return;
@@ -275,6 +303,7 @@ function renderLive(){
       rows.push(`<tr><td>${x ? (x.mm.map(m => m.id).join(",") || x.n) : ""}</td><td class="n b">${x ? x.s.toLocaleString() : ""}</td><td class="n b">${x ? "$"+px(x.p) : ""}</td>
         <td class="n a">${y ? "$"+px(y.p) : ""}</td><td class="n a">${y ? y.s.toLocaleString() : ""}</td><td>${y ? (y.mm.map(m => m.id).join(",") || y.n) : ""}</td></tr>`);
     }
+    body += ladder();
     body += `<div class="lv"><div><h2 style="border-top:1px solid var(--line)">Level 2 <span class="c">${b ? b.svc : "אין נתונים למניה הזו (עדיין)"}</span></h2>
       <div class="wrap book"><table><tr><th>MM</th><th>כמות</th><th>Bid</th><th>Ask</th><th>כמות</th><th>MM</th></tr>${rows.join("")}</table></div></div>
       <div><h2 style="border-top:1px solid var(--line)">עסקאות בזמן אמת <span class="c">${live.tape.length}</span></h2><div class="tape"><table>

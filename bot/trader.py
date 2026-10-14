@@ -119,6 +119,33 @@ def book(sym):
     return res
 
 
+def stop_exit(bk, stop, shares):
+    """Where selling at the stop would really fill: walk the buyers at or below the stop until our shares are
+    absorbed. Returns the average price, or None when the visible buyers are not enough."""
+    left, got = shares, 0.0
+    for x in sorted((x for x in bk["bids"] if x["price"] and x["price"] <= stop + 1e-9), key=lambda x: -x["price"]):
+        take = min(left, x["size"])
+        got += take * x["price"]
+        left -= take
+        if left <= 0:
+            return got / shares
+    return None
+
+
+def bid_hole(bk, at_or_below):
+    """The first gap in the buyers' side at or below a price: (last solid level, next buyer) or None.
+    Example (BDPT): buyers at 0.0041 and 0.0040, the next one only at 0.0023."""
+    levels = sorted({x["price"] for x in bk["bids"] if x["price"] and x["price"] <= at_or_below + 1e-9}, reverse=True)
+    for a, b in zip(levels, levels[1:]):
+        if 1 - b / a >= config.TRADE_L2_HOLE:
+            return a, b
+    return None
+
+
+def hole_text(h):
+    return f"אחרי ${fmt_price(h[0])} הקונה הבא רק ב-${fmt_price(h[1])} (−{(1 - h[1] / h[0]) * 100:.0f}%)"
+
+
 def book_wall(bk, low, high, our_shares):
     """Hebrew description of a big seller sitting between `low` and `high`, or ''."""
     if not bk or not bk["asks"]:
@@ -353,6 +380,20 @@ def _buy(run, sym, c):
     if bk and bk["bids"]:     # Level 2: buy no more than the buyers standing near the bid can take back from us
         depth = sum(x["size"] for x in bk["bids"][:config.TRADE_L2_LEVELS])
         shares = min(shares, int(depth * config.TRADE_L2_BID_SHARE))
+        # a hole under the stop: the stop would really fill much lower -> buy only what the buyers near the
+        # stop can absorb (or nothing)
+        visible_low = min((x["price"] for x in bk["bids"] if x["price"]), default=None)
+        if visible_low is not None and visible_low <= plan["stop"]:
+            ex = stop_exit(bk, plan["stop"], shares)
+            if ex is None or entry - ex > risk * config.TRADE_L2_RISK_X:
+                near = sum(x["size"] for x in bk["bids"]
+                           if x["price"] and plan["stop"] * (1 - config.TRADE_L2_NEAR) <= x["price"] <= plan["stop"])
+                shares = min(shares, int(near))
+                if shares * entry < config.TRADE_MIN_DOLLARS:
+                    h = bid_hole(bk, plan["stop"])
+                    c["why"] = ("Level 2: חור בצד הקונים מתחת לעצירה – " + hole_text(h)) if h else \
+                        "Level 2: אין מספיק קונים ליד נקודת העצירה"
+                    return False
     if shares * entry < config.TRADE_MIN_DOLLARS:
         c["why"] = "אין מספיק מסחר / קונים במניה בשביל עסקה כדאית"
         return False
@@ -673,6 +714,19 @@ def _manage(run, sym, p):
             _sell(run, sym, p["shares"], sell, f"🔴 נוספו מניות ({dilution.fmt(p['tso0'])} → "
                                                f"{dilution.fmt(d['tso'])}) – מדלל פעיל, יציאה מיידית")
             return
+    # Level 2: a hole in the buyers right under our stop -> when in profit, lift the stop onto the last solid level
+    bk = book(sym)
+    if bk and bk["bids"] and p["stop"] >= p["entry"]:
+        h = bid_hole(bk, last)
+        if h and h[1] < p["stop"] < h[0] < last:      # our stop sits inside the hole
+            p["stop"] = h[0]
+            _note(run, sym, "hole", f"🕳️ <b>{sym}</b>: Level 2 – {hole_text(h)}. העצירה הועלתה ל-${fmt_price(h[0])}, "
+                                    "כדי לצאת לפני שהקונים נגמרים.")
+    elif bk and bk["bids"]:
+        h = bid_hole(bk, p["stop"])
+        if h and h[0] >= p["stop"] * (1 - config.TRADE_L2_NEAR):
+            _note(run, sym, "hole", f"⚠️ <b>{sym}</b>: Level 2 – {hole_text(h)}. אם העצירה תיפגע, המכירה עלולה "
+                                    "להתבצע נמוך מהמתוכנן.")
     if _heavy_selling(run, sym, p, bars, sell):
         return
     # end of day: make sure we are not too big for the buyers that are there
@@ -801,19 +855,21 @@ def cycle(run):
                 c["deadline"] = max(c["ts"], open_ts) + config.TRADE_WINDOW_MIN * 60
             try:
                 bought = sym not in pt["pos"] and _buy(run, sym, c)
+                if (c.get("why") or "").startswith("Level 2"):
+                    c["why_l2"] = c["why"]          # the most telling reason stays in the daily summary
             except Exception as e:
                 log(f"trader: buy check failed ({net.short_err(e)})")
                 bought = False
             if bought or sym in pt["pos"]:
                 pt["cands"].pop(sym, None)
             elif c.get("drop") or time.time() > c["deadline"]:
-                pt["skips"].setdefault(day, []).append([sym, c.get("why") or "לא נמצאה נקודת כניסה טובה"])
+                pt["skips"].setdefault(day, []).append([sym, c.get("why_l2") or c.get("why") or "לא נמצאה נקודת כניסה טובה"])
                 pt["cands"].pop(sym, None)
     else:
         # news that came after the close waits for the next session; expired / old ones are dropped
         for sym, c in list(pt["cands"].items()):
             if c["deadline"] and time.time() > c["deadline"]:
-                pt["skips"].setdefault(day, []).append([sym, c.get("why") or "לא נמצאה נקודת כניסה טובה"])
+                pt["skips"].setdefault(day, []).append([sym, c.get("why_l2") or c.get("why") or "לא נמצאה נקודת כניסה טובה"])
                 pt["cands"].pop(sym, None)
             elif _days(c["ts"]) > 3:
                 pt["cands"].pop(sym, None)

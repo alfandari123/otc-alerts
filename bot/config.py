@@ -60,6 +60,9 @@ TRADE_L2_LEVELS = 3           # buyers counted in the first 3 bid levels ...
 TRADE_L2_BID_SHARE = 0.5      # ... we buy at most half of them (so they can take our shares back)
 TRADE_L2_WALL_X = 5           # seller wall: an ask 5x the usual size ...
 TRADE_L2_WALL_VS_US = 3       # ... and 3x our own position, before the target -> no buy
+TRADE_L2_HOLE = 0.25          # a gap of 25%+ between two buyer levels = a hole (BDPT: 0.0040 -> 0.0023)
+TRADE_L2_RISK_X = 1.3         # the stop would really fill 30%+ worse than planned -> buy less / skip
+TRADE_L2_NEAR = 0.15          # buyers within 15% under the stop count as "near the stop"
 TRADE_MAX_CHASE = 0.60        # do not buy after the stock already rose 60%+ from the pre-news price
 TRADE_DUMP_FROM_HIGH = 0.30   # do not buy when the price already fell 30% from the day's high
 TRADE_CONFIRM_BARS = 5        # price must be higher than 5 trading minutes ago
