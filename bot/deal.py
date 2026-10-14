@@ -13,9 +13,9 @@ OUTSTANDING = [re.compile(p, re.I) for p in (
     NUM + r" shares of (?:our |the Company'?s? )?common stock(?:, par value [^,]{1,30},)? (?:were |are )?(?:issued and )?outstanding",
     r"(?:there were|we had|has) " + NUM + r" shares of (?:our )?common stock (?:issued and )?outstanding",
 )]
-ISSUED = re.compile(r"issu\w+ (?:an aggregate of |a total of )?(?:approximately )?" + NUM
+ISSUED = re.compile(r"(?<!to )(?<!may be )issued (?:to the \w+ )?(?:an aggregate of |a total of )?(?:approximately )?" + NUM
                     + r" (?:restricted |newly[- ]issued |unregistered )?shares", re.I)
-PCT = re.compile(r"(?:represent|constitut)\w* (?:approximately |about )?(\d{1,2}(?:\.\d+)?)% of the (?:issued and )?outstanding", re.I)
+PCT = re.compile(r"(?:represent|constitut)\w* (?:approximately |about )?(\d{1,2}(?:\.\d+)?)%", re.I)
 AUTH = re.compile(r"authorized to issue (?:up to )?" + NUM + r" shares of (?:our )?common stock", re.I)
 RESTRICTED = re.compile(r"restricted securities|Rule 144|Section 4\(a\)\(2\)|Regulation S\b|Regulation D\b|Rule 506", re.I)
 TOXIC = re.compile(r"convertible (?:promissory )?notes?|conversion price|discount to the (?:market|lowest)|variable (?:conversion|price)"
