@@ -47,7 +47,7 @@ def facts(text, items=()):
     if auth:
         out["auth"] = max(auth)
     out["restricted"] = bool(RESTRICTED.search(t))
-    out["toxic"] = bool(TOXIC.search(t))
+    out["toxic"] = bool(TOXIC.search(t[:40000]))   # the deal sections; risk factors further down mention notes "in general"
     out["merger"] = bool(MERGER.search(t)) or bool({"2.01", "5.01"} & set(items))
     out["lockup"] = bool(LOCKUP.search(t))
     return out if (out.get("after") or out.get("issued") or out.get("auth")) else {}

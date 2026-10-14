@@ -50,7 +50,7 @@ def init(st):
     cash = config.TRADE_LIVE_MAX_CAPITAL if live() else config.TRADE_START_CASH
     for k, v in (("start", cash), ("cash", cash), ("pos", {}), ("cands", {}),
                  ("closed", []), ("skips", {}), ("day_rep", ""), ("week_rep", ""), ("dil", {}), ("neg", {}),
-                 ("eq_hist", []), ("fees", 0.0), ("notes", {}), ("paused", False), ("orders", {})):
+                 ("eq_hist", []), ("fees", 0.0), ("notes", {}), ("paused", False), ("orders", {}), ("rm", {})):
         pt.setdefault(k, v)
     for p in pt["pos"].values():   # positions opened by the first version
         p.setdefault("basis", p["shares"] * p["entry"])
@@ -216,6 +216,18 @@ def on_news(st, sym, score, cat, it, price):
     log("trader: new candidate")
 
 
+def on_deal(st, syms, facts):
+    """A merger / share exchange paid with RESTRICTED shares to the new owners (Rule 144): that is not market
+    dilution, so it does not block a buy the way a convertible note or an offering does."""
+    if not config.TRADE_ON:
+        return
+    pt = init(st)
+    for s in syms:
+        if time.time() - pt["dil"].get(s, 0) < 900:      # the flag this same filing just set (Item 3.02)
+            pt["dil"].pop(s, None)
+        pt["rm"][s] = {"ts": time.time(), "after": facts.get("after"), "auth": facts.get("auth")}
+
+
 def on_item(st, it, rule):
     """Any new item: remember fresh dilution signs and bad news per ticker."""
     if not config.TRADE_ON or not it.get("syms"):
@@ -244,6 +256,12 @@ def _danger(st, sym, since=None):
     why = insiders.danger(insiders.get(st, sym))
     if why:
         return why
+    rm = pt["rm"].get(sym)
+    if rm and _days(rm["ts"]) < 180:
+        # share count jumped because of the merger (restricted shares) - judge the room left, not the jump
+        if rm.get("after") and rm.get("auth") and rm["after"] >= rm["auth"] * config.TRADE_AUTH_USED_MAX:
+            return "אחרי המיזוג כמעט כל המניות המורשות בשימוש – צפויה הגדלה ודילול"
+        return ""
     d = dilution.summary(sym, st, str(et_now().date()))
     if d:
         if (d.get("chg3") or 0) >= config.DILUTION_WARN_3M:
@@ -841,6 +859,7 @@ def cycle(run):
     day = str(now.date())
     pt["dil"] = {s: t for s, t in pt["dil"].items() if _days(t) < 30}
     pt["neg"] = {s: v for s, v in pt["neg"].items() if _days(v[0]) < 30}
+    pt["rm"] = {s: v for s, v in pt["rm"].items() if _days(v["ts"]) < 180}
     pt["notes"] = {k: v for k, v in pt["notes"].items() if _days(v) < 2}
     if _session(now) == "open":
         for sym in list(pt["pos"]):

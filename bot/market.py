@@ -89,3 +89,32 @@ def volume_spike(sym, today):
     prev = closes[-1] if closes else c["prev"]
     chg = (p / prev - 1) * 100 if prev else None
     return {"vol": vol_today, "avg": avg, "ratio": ratio, "price": p, "chg": chg}
+
+
+def liquidity(sym):
+    """Trading activity over the last 20 sessions: {"days", "of", "dollars"} or None."""
+    c = chart(sym)
+    if not c:
+        return None
+    if not c["ts"]:                      # Yahoo knows the stock but has no trades this month
+        return {"days": 0, "of": 20, "dollars": 0.0}
+    if len(c["vol"]) != len(c["ts"]):
+        return None
+    rows = list(zip(c["vol"], c["close"]))[-20:]
+    days = sum(1 for v, _ in rows if v)
+    dollars = sum((v or 0) * (p or 0) for v, p in rows) / len(rows) if rows else 0
+    return {"days": days, "of": len(rows), "dollars": dollars}
+
+
+def liquidity_lines(sym):
+    """Hebrew line for alerts: can this stock actually be bought and sold?"""
+    if not sym:
+        return []
+    q = liquidity(sym)
+    if not q:
+        return []
+    if q["days"] == 0:
+        return ["\u26a0\ufe0f \u05de\u05e1\u05d7\u05e8: \u05d0\u05d9\u05df \u05e2\u05e1\u05e7\u05d0\u05d5\u05ea \u05d1\u05d7\u05d5\u05d3\u05e9 \u05d4\u05d0\u05d7\u05e8\u05d5\u05df \u2013 \u05db\u05de\u05e2\u05d8 \u05d0\u05d9 \u05d0\u05e4\u05e9\u05e8 \u05dc\u05e7\u05e0\u05d5\u05ea \u05d0\u05d5 \u05dc\u05de\u05db\u05d5\u05e8 (\u05d4\u05de\u05d7\u05d9\u05e8 \u05d1\u05d4\u05ea\u05e8\u05d0\u05d4 \u05d9\u05e9\u05df)"]
+    warn = q["days"] < q["of"] / 2 or q["dollars"] < 1000
+    return [("\u26a0\ufe0f " if warn else "\ud83d\udcc9 ")
+            + f"\u05de\u05e1\u05d7\u05e8: {q['days']} \u05de\u05ea\u05d5\u05da {q['of']} \u05d9\u05de\u05d9\u05dd \u05d0\u05d7\u05e8\u05d5\u05e0\u05d9\u05dd, \u05de\u05d7\u05d6\u05d5\u05e8 \u05de\u05de\u05d5\u05e6\u05e2 ${q['dollars']:,.0f} \u05dc\u05d9\u05d5\u05dd"]

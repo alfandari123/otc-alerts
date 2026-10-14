@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, dilution, market, rules, schwab, state, telegram, trader
+from . import ai, config, deal, dilution, market, rules, schwab, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -361,6 +361,9 @@ def evaluate(run, it):
         if it["src"] in ENRICH:
             ENRICH[it["src"]](it)
         it["shares"] = dilution.ai_text(_dil(st, syms))
+        it["deal"] = deal.facts(it.get("full", ""), it.get("items", ()))
+        if it["deal"]:
+            it["shares"] += ("; " if it["shares"] else "") + "FROM THIS FILING: " + deal.ai_text(it["deal"])
         res = ai.analyze(it, price)
         if res:
             st["ai"]["n"] += 1
@@ -382,6 +385,8 @@ def evaluate(run, it):
                 "above": config.SCORE_ABOVE_RANGE}[band]
         if sentiment != "positive" or score < need:
             return None
+    if syms and deal.kind(it.get("deal")) == "merger_restricted":
+        trader.on_deal(st, syms, it["deal"])
     if res and syms and sentiment == "positive" and score >= config.TRADE_MIN_SCORE and band == "in":
         trader.on_news(st, syms[0], score, res["category_he"] or rule["label"], it, price)
     return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms))
@@ -423,7 +428,9 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None):
             lines.append("זוהה: " + esc(" · ".join(rule["labels"][:3])))
     if res and res["risk_he"]:
         lines.append("⚠️ " + esc(res["risk_he"]))
+    lines += deal.lines(it.get("deal"), (dil or {}).get("tso"))
     lines += dilution.lines(dil)
+    lines += market.liquidity_lines(sym)
     lines.append(_links(it, sym))
     if not res:
         lines.append("<i>(בלי AI – זיהוי לפי מילות מפתח)</i>")
@@ -443,6 +450,7 @@ def action_message(it, rule, syms, price, hit, dil=None):
     if it.get("text"):
         lines.append(esc(it["text"]))
     lines += dilution.lines(dil)
+    lines += market.liquidity_lines(sym)
     lines.append(_links(it, sym))
     return "\n".join(lines)
 
