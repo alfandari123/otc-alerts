@@ -46,7 +46,7 @@ footer{color:var(--mute);font-size:12px;text-align:center;padding:8px}
 </style>
 </head>
 <body>
-<header><h1>📈 מסך מסחר OTC <span class="mute" style="font-weight:400;font-size:12px">· כסף וירטואלי</span></h1>
+<header><h1>📈 מסך מסחר OTC <span id="mode" class="mute" style="font-weight:400;font-size:12px">· כסף וירטואלי</span></h1>
 <span id="upd" class="badge">טוען…</span></header>
 <main id="app"></main>
 <footer>הסוכן קונה ומוכר לפי מחירי Yahoo של כל דקה · קנייה צעד מחיר מעל המחיר האחרון, מכירה צעד מתחת · עמלה <span id="fee"></span> לכל פעולה</footer>
@@ -89,6 +89,10 @@ function render(){
   const closed = d.closed, wins = closed.filter(x => x.pnl > 0.005), real = closed.reduce((a,x) => a + x.pnl, 0);
   const tot = d.equity - d.start;
   $("#fee").textContent = "$" + d.fee;
+  const sw = d.schwab || {};
+  $("#mode").innerHTML = (d.mode === "live" ? '· <span class="pill r">💵 כסף אמיתי</span>' : "· כסף וירטואלי")
+    + (d.paused ? ' <span class="pill y">⏸️ בהשהיה</span>' : "")
+    + (sw.connected ? ` <span class="pill g">Schwab ✓ ${sw.days_left >= 1.5 ? Math.round(sw.days_left) + " ימים" : Math.max(1, Math.round(sw.days_left * 24)) + " שעות"}</span>` : "");
   let h = `<div class="kpis">
    <div class="kpi"><div class="l">שווי התיק</div><div class="v">${usd(d.equity)}</div><div class="s ${cls(tot)}">${usd(tot,1)} (${pct(tot/d.start*100)})</div></div>
    <div class="kpi"><div class="l">מזומן</div><div class="v">${usd(d.cash)}</div><div class="s mute">התחלה ${usd(d.start)}</div></div>
@@ -114,6 +118,8 @@ function render(){
       <div style="grid-column:1/-1">סיבה<b style="direction:rtl;font-size:13px">${esc(p.cat)} · ציון ${p.score}/10 ${p.url ? `· <a href="${esc(p.url)}" target="_blank">לחדשה</a>` : ""}</b></div></div>`;
   } else h += `<div class="empty">אין פוזיציות פתוחות כרגע.</div>`;
   h += `</section>
+  ${(d.orders||[]).length ? `<section><h2>פקודות פתוחות ב-Schwab <span class="c">${d.orders.length}</span></h2><div class="wrap"><table><tr><th>מניה</th><th>פעולה</th><th>כמות</th><th>מחיר</th><th>נשלחה</th></tr>` +
+    d.orders.map(o => `<tr><td><b>${o.sym}</b></td><td>${o.side === "BUY" ? '<span class="pill g">קנייה</span>' : '<span class="pill r">מכירה</span>'}</td><td class="n">${o.qty.toLocaleString()}</td><td class="n">$${px(o.price)}</td><td>${d8(o.ts)}</td></tr>`).join("") + `</table></div></section>` : ""}
   <section><h2>במעקב לקנייה <span class="c">${d.cands.length}</span></h2>` + (d.cands.length ? `<div class="wrap"><table><tr><th>מניה</th><th>חדשה</th><th>ציון</th><th>מצב</th></tr>` +
     d.cands.map(c => `<tr><td><b>${c.sym}</b></td><td class="why">${c.url ? `<a href="${esc(c.url)}" target="_blank">${esc(c.cat)}</a>` : esc(c.cat)}</td><td class="n">${c.score}</td><td class="why">${esc(c.why) || "בודק…"}</td></tr>`).join("") + `</table></div>`
     : `<div class="empty">אין מניות במעקב כרגע. כשתגיע חדשה חיובית חזקה היא תופיע כאן.</div>`) + `</section>

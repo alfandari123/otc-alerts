@@ -1,0 +1,10 @@
+{
+  // Schwab login helper for the OTC bot. Deploy: npx wrangler deploy (from this folder).
+  "name": "otc-schwab",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "kv_namespaces": [
+    { "binding": "KV", "id": "7b2b91af0e7f4862a3611a83b23cb4ab" }
+  ],
+  "observability": { "enabled": true }
+}

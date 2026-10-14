@@ -54,6 +54,7 @@ TRADE_MIN_DOLLARS = 150       # smaller buys are eaten by the fees
 TRADE_RR = 3.0                # gain must be 3x the loss, after the spread and the fees
 TRADE_MAX_RISK = 0.35         # stop no more than 35% below the buy price
 TRADE_MAX_TARGET = 2.0        # skip when 1:3 needs more than +200%
+TRADE_MAX_SPREAD = 0.25      # skip when the real ask is 25%+ above the bid (only known with Schwab quotes)
 TRADE_MAX_CHASE = 0.60        # do not buy after the stock already rose 60%+ from the pre-news price
 TRADE_DUMP_FROM_HIGH = 0.30   # do not buy when the price already fell 30% from the day's high
 TRADE_CONFIRM_BARS = 5        # price must be higher than 5 trading minutes ago
@@ -94,6 +95,18 @@ STATE_KEY = os.environ.get("STATE_KEY", "").strip()
 SEC_CONTACT = os.environ.get("SEC_CONTACT", "").strip()  # SEC requires a contact e-mail
 
 IN_CLOUD = os.environ.get("GITHUB_ACTIONS") == "true"
+
+# --- Charles Schwab (real trading, later). Login helper worker: schwab-worker/ ---
+SCHWAB_WORKER = "https://otc-schwab.range-guard.workers.dev"
+SCHWAB_BOT_KEY = os.environ.get("SCHWAB_BOT_KEY", "").strip()
+SCHWAB_LOGIN_KEY = os.environ.get("SCHWAB_LOGIN_KEY", "").strip()
+SCHWAB_REMIND_DAYS_LEFT = 1.0      # remind to log in when the 7-day login has 1 day left (once a day)
+SCHWAB_CHECK_EVERY_MIN = 30
+# "paper" = virtual money only. "live" = real orders at Schwab (Reuven switches it on, after the paper test).
+TRADE_MODE = "paper"
+TRADE_LIVE_MAX_CAPITAL = 5000.0    # the bot never uses more than this of the real account (he trades there too)
+TRADE_LIVE_ORDER_MIN = 3           # an unfilled buy is cancelled after 3 minutes
+TRADE_LIVE_SELL_RETRY_MIN = 2      # an unfilled sell is re-priced at the new bid every 2 minutes
 
 DASH_PAGE = "https://alfandari123.github.io/otc-alerts/"   # the trading screen (GitHub Pages, docs/)
 

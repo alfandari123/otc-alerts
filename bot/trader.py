@@ -14,7 +14,7 @@ import math
 import time
 from datetime import datetime
 
-from . import config, dilution, market, net
+from . import config, dilution, market, net, schwab
 from .util import ET, esc, et_now, fmt_price, log
 
 BARS_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1m&range=1d"
@@ -24,6 +24,7 @@ DIL_LABELS = {"הנפקת מניות (דילול)", "הנפקת Reg A (דילו�
 END_OF_DILUTION = "סוף הדילול"
 
 _bars = {}   # per-cycle cache: ticker -> (bars, previous close)
+_quotes = {}  # per-cycle cache: ticker -> Schwab bid/ask (None when not connected)
 
 
 # ---------- helpers ----------
@@ -39,12 +40,17 @@ def _grid(x, p, up):
     return round(max(n, 1) * t, 4 if t < 0.01 else 2)
 
 
+def live():
+    return config.TRADE_MODE == "live"
+
+
 def init(st):
-    pt = st.get("pt")
-    if not pt:
-        pt = st["pt"] = {"start": config.TRADE_START_CASH, "cash": config.TRADE_START_CASH, "pos": {},
-                         "cands": {}, "closed": [], "skips": {}, "day_rep": "", "week_rep": ""}
-    for k, v in (("dil", {}), ("neg", {}), ("eq_hist", []), ("fees", 0.0), ("notes", {})):
+    """The agent's book: "pt" = virtual money, "lt" = real money at Schwab (separate, so the test stays clean)."""
+    pt = st.setdefault("lt" if live() else "pt", {})
+    cash = config.TRADE_LIVE_MAX_CAPITAL if live() else config.TRADE_START_CASH
+    for k, v in (("start", cash), ("cash", cash), ("pos", {}), ("cands", {}),
+                 ("closed", []), ("skips", {}), ("day_rep", ""), ("week_rep", ""), ("dil", {}), ("neg", {}),
+                 ("eq_hist", []), ("fees", 0.0), ("notes", {}), ("paused", False), ("orders", {})):
         pt.setdefault(k, v)
     for p in pt["pos"].values():   # positions opened by the first version
         p.setdefault("basis", p["shares"] * p["entry"])
@@ -74,6 +80,29 @@ def get_bars(sym):
         log(f"trader: bars failed ({net.short_err(e)})")
     _bars[sym] = (out, prev)
     return _bars[sym]
+
+
+def quote(sym):
+    """Real bid/ask from Schwab when connected (also improves the virtual test), else None."""
+    if sym in _quotes:
+        return _quotes[sym]
+    q = None
+    s = schwab.status()
+    if s and s.get("connected"):
+        try:
+            q = schwab.quotes([sym]).get(sym)
+        except Exception as e:
+            log(f"trader: quote failed ({net.short_err(e)})")
+    if q and not (q.get("bid") and q.get("ask")):
+        q = None
+    _quotes[sym] = q
+    return q
+
+
+def sell_price(sym, last):
+    """Price we can sell at right now: the real bid, or one tick under the last trade."""
+    q = quote(sym)
+    return q["bid"] if q else last - tick(last)
 
 
 def equity(pt):
@@ -144,7 +173,7 @@ def on_item(st, it, rule):
 
 def _danger(st, sym, since=None):
     """Hebrew reason when the stock is dangerous (dilution / bad news), else ''."""
-    pt = st["pt"]
+    pt = init(st)
     since = since or time.time() - config.TRADE_DIL_FLAG_DAYS * 86400
     if pt["dil"].get(sym, 0) > since:
         return "דיווח טרי על הנפקה / הלוואה להמרה / ספליט הפוך"
@@ -215,6 +244,12 @@ def _plan(c, bars, prev):
     if wall:
         return None, f"מוכר גדול יושב על ${fmt_price(wall)} – המחיר לא עובר אותו"
     entry = _grid(last + t, last, True)
+    q = c.get("q")
+    if q:    # real bid/ask from Schwab: buy at the ask, and skip when buyers and sellers are too far apart
+        spread = (q["ask"] - q["bid"]) / q["ask"]
+        if spread > config.TRADE_MAX_SPREAD:
+            return None, f"הפער בין הקונים למוכרים גדול מדי ({spread * 100:.0f}%)"
+        entry = _grid(q["ask"], q["ask"], True)
     swing = min(b["l"] for b in bars[-15:])
     stop = _grid(max(ref, swing - t), last, False)
     stop = max(stop, _grid(entry * (1 - config.TRADE_MAX_RISK), last, True))
@@ -243,7 +278,7 @@ def _target(entry, risk, shares, p):
 
 
 def _buy(run, sym, c):
-    st, pt = run.st, run.st["pt"]
+    st, pt = run.st, init(run.st)
     now = et_now()
     if not config.TRADE_ENTRY_FROM <= _mins(now) <= config.TRADE_ENTRY_UNTIL:
         return False
@@ -255,7 +290,12 @@ def _buy(run, sym, c):
     if why:
         c["why"], c["drop"] = why, True
         return False
+    if pt["paused"]:
+        c["why"] = "הסוכן בהשהיה (/go כדי להמשיך)"
+        return False
+    c["q"] = quote(sym)
     plan, why = _plan(c, bars, prev)
+    c.pop("q", None)
     if not plan:
         c["why"] = why
         return False
@@ -279,21 +319,36 @@ def _buy(run, sym, c):
     if target / entry - 1 > config.TRADE_MAX_TARGET:
         c["why"] = f"כדי לקבל 1:3 אחרי עמלות צריך עלייה של {(target / entry - 1) * 100:.0f}% – לא ריאלי"
         return False
+    info = {"stop": plan["stop"], "target": target, "R": risk, "ref": plan["ref"], "cat": c["cat"],
+            "score": c["score"], "title": c.get("title", ""), "url": c.get("url", ""),
+            "last": bars[-1]["c"], "last_t": bars[-1]["t"]}
+    if live():
+        return _live_buy(run, sym, shares, entry, info)
+    _open(run, sym, shares, entry, info)
+    return True
+
+
+def _open(run, sym, shares, entry, info):
+    """A buy was filled (virtual: at once; real: when Schwab reports the fill)."""
+    st, pt = run.st, init(run.st)
     cost = shares * entry
     pt["cash"] -= cost + config.TRADE_FEE
     pt["fees"] += config.TRADE_FEE
-    d = dilution.summary(sym, st, str(now.date()))
-    pt["pos"][sym] = {"shares": shares, "shares0": shares, "entry": entry, "stop": plan["stop"],
-                      "stop0": plan["stop"], "target": target, "R": risk, "high": entry, "last": bars[-1]["c"],
-                      "opened": time.time(), "last_t": bars[-1]["t"], "cat": c["cat"], "score": c["score"],
-                      "ref": plan["ref"], "basis": cost + config.TRADE_FEE, "tso0": d["tso"] if d else None,
-                      "tso_chk": time.time(), "be": False, "runner": False, "title": c.get("title", ""),
-                      "url": c.get("url", "")}
+    d = dilution.summary(sym, st, str(et_now().date()))
+    risk, target = info["R"], info["target"]
+    pt["pos"][sym] = {"shares": shares, "shares0": shares, "entry": entry, "stop": info["stop"],
+                      "stop0": info["stop"], "target": target, "R": risk, "high": entry, "last": info["last"],
+                      "opened": time.time(), "last_t": info["last_t"], "cat": info["cat"], "score": info["score"],
+                      "ref": info["ref"], "basis": cost + config.TRADE_FEE, "tso0": d["tso"] if d else None,
+                      "tso_chk": time.time(), "be": False, "runner": False, "title": info["title"],
+                      "url": info["url"]}
+    c = info
+    plan = {"stop": info["stop"], "ref": info["ref"]}
     gain = (target / entry - 1) * 100
     loss = risk / entry * 100
     net_gain = shares * (target - entry) - 2 * config.TRADE_FEE
     net_loss = shares * risk + 2 * config.TRADE_FEE
-    run.notify(f"🛒 <b>קנייה וירטואלית: {sym}</b> ({price_class(entry)})\n"
+    run.notify(f"🛒 <b>קנייה {_word()}: {sym}</b> ({price_class(entry)})\n"
                f"{esc(c['cat'])} · ציון {c['score']}/10\n"
                f"{shares:,} מניות × ${fmt_price(entry)} = ${cost:,.0f} ({cost / equity(pt) * 100:.0f}% מהתיק)\n"
                f"🎯 יעד: ${fmt_price(target)} (+{gain:.0f}%) · 🛑 עצירה: ${fmt_price(plan['stop'])} (−{loss:.0f}%)\n"
@@ -308,7 +363,7 @@ def _buy(run, sym, c):
 
 def _rotate(run, c):
     """All slots are full: free one by selling a stock that has been standing still, for much stronger news."""
-    pt = run.st["pt"]
+    pt = init(run.st)
     if c["score"] < config.TRADE_ROTATE_SCORE:
         return False
     still = [(p["opened"], s) for s, p in pt["pos"].items()
@@ -317,24 +372,37 @@ def _rotate(run, c):
         return False
     _, sym = min(still)
     p = pt["pos"][sym]
-    _sell(run, sym, p["shares"], p["last"] - tick(p["last"]),
+    _sell(run, sym, p["shares"], sell_price(sym, p["last"]),
           f"מפנה מקום: המניה עומדת {_days(p['opened']):.0f} ימים, ויש הזדמנות חזקה יותר")
     return True
 
 
 # ---------- selling ----------
 
+def _word():
+    return "אמיתית" if live() else "וירטואלית"
+
+
 def _sell(run, sym, shares, fill, reason):
-    """Sell `shares` (all or part). Returns True when the position is closed."""
-    pt = run.st["pt"]
+    """Sell `shares` (all or part) at about `fill`. Returns True when the position is closed now.
+    Real money: a limit order is sent and the sale is booked when Schwab reports the fill."""
+    if live():
+        _live_sell(run, sym, shares, fill, reason)
+        return False
+    return _book(run, sym, shares, fill, reason)
+
+
+def _book(run, sym, shares, fill, reason, fee=True):
+    pt = init(run.st)
     p = pt["pos"][sym]
     shares = min(shares, p["shares"])
     fill = max(fill, tick(fill))
     basis = p["basis"] * shares / p["shares"]
-    proceeds = shares * fill - config.TRADE_FEE
+    cost = config.TRADE_FEE if fee else 0.0
+    proceeds = shares * fill - cost
     pnl = proceeds - basis
     pt["cash"] += proceeds
-    pt["fees"] += config.TRADE_FEE
+    pt["fees"] += cost
     p["basis"] -= basis
     p["shares"] -= shares
     closed = p["shares"] <= 0
@@ -348,18 +416,112 @@ def _sell(run, sym, shares, fill, reason):
     pct = (fill / p["entry"] - 1) * 100
     icon = "✅" if pnl > 0.005 else ("⚪" if pnl > -0.005 else "🔻")
     part = "" if closed else f" (חלקית – {shares:,} מתוך {shares + p['shares']:,} מניות)"
-    run.notify(f"{icon} <b>מכירה וירטואלית: {sym}</b>{part}\n{esc(reason)}\n"
+    run.notify(f"{icon} <b>מכירה {_word()}: {sym}</b>{part}\n{esc(reason)}\n"
                f"קנייה ${fmt_price(p['entry'])} ← מכירה ${fmt_price(fill)} ({pct:+.0f}%)\n"
                f"רווח/הפסד אחרי עמלות: <b>{'+' if pnl >= 0 else '−'}${abs(pnl):,.2f}</b> ({r_mult:+.1f}R)\n"
-               + ("" if closed else f"נשארו {p['shares']:,} מניות כבונוס · 🛑 עצירה ${fmt_price(p['stop'])} (ברווח)\n")
+               + ("" if closed else f"נשארו {p['shares']:,} מניות" + (" כבונוס" if p["runner"] else "")
+                  + f" · 🛑 עצירה ${fmt_price(p['stop'])}" + (" (ברווח)" if p["stop"] > p["entry"] else "") + "\n")
                + f"שווי התיק: ${equity(pt):,.0f}")
     log("trader: sold" + ("" if closed else " (part)"))
     return closed
 
 
+# ---------- real money (Schwab): orders are sent, fills are booked when Schwab reports them ----------
+
+def _live_buy(run, sym, shares, entry, info):
+    st, pt = run.st, init(run.st)
+    try:
+        acct = schwab.account(st)
+    except Exception as e:
+        log(f"trader: account failed ({net.short_err(e)})")
+        return False
+    shares = min(shares, int((acct["cash"] - config.TRADE_FEE) / entry))
+    if shares * entry < config.TRADE_MIN_DOLLARS:
+        _note(run, sym, "cash", f"⚠️ <b>{sym}</b>: אין מספיק מזומן בחשבון Schwab לקנייה.")
+        return False
+    try:
+        oid = schwab.place(st, sym, "BUY", shares, entry)
+    except Exception as e:
+        _note(run, sym, "rej", f"⚠️ <b>{sym}</b>: Schwab דחו את פקודת הקנייה ({esc(net.short_err(e))}).")
+        return False
+    reserve = shares * entry + config.TRADE_FEE
+    pt["cash"] -= reserve     # held until the order ends, so two buys cannot use the same money
+    pt["orders"][oid] = {"sym": sym, "qty": shares, "price": entry, "ts": time.time(), "reserve": reserve,
+                         "info": info}
+    run.notify(f"📤 <b>נשלחה פקודת קנייה: {sym}</b>\n{shares:,} מניות במחיר עד ${fmt_price(entry)} "
+               f"(${shares * entry:,.0f}). אם לא תתבצע תוך {config.TRADE_LIVE_ORDER_MIN} דקות – תבוטל.")
+    log("trader: buy order sent")
+    return True
+
+
+def _live_sell(run, sym, shares, price, reason):
+    st, pt = run.st, init(run.st)
+    p = pt["pos"][sym]
+    if p.get("selling"):
+        return
+    shares = min(shares, p["shares"])
+    try:
+        held = schwab.account(st)["pos"].get(sym, 0)
+        shares = min(shares, held)    # never sell shares that are not there (he trades the same account)
+        if shares <= 0:
+            pt["pos"].pop(sym)
+            run.notify(f"⚠️ <b>{sym}</b>: המניות כבר לא בחשבון (נמכרו ידנית?) – הסוכן מפסיק לנהל אותה.")
+            return
+        q = quote(sym)
+        if q:
+            price = q["bid"]          # real money: sell to the buyers that are there now
+        price = max(_grid(price, price, False), tick(price))
+        oid = schwab.place(st, sym, "SELL", shares, price)
+    except Exception as e:
+        log(f"trader: sell order failed ({net.short_err(e)})")
+        return
+    p["selling"] = {"oid": oid, "qty": shares, "price": price, "ts": time.time(), "why": reason, "booked": 0}
+    run.notify(f"📤 <b>נשלחה פקודת מכירה: {sym}</b>\n{esc(reason)}\n{shares:,} מניות במחיר ${fmt_price(price)}")
+    log("trader: sell order sent")
+
+
+def _sync_orders(run):
+    """Follow our open orders at Schwab: book fills, cancel stale buys, re-price stale sells."""
+    st, pt = run.st, init(run.st)
+    try:
+        for oid, o in list(pt["orders"].items()):
+            s = schwab.order(st, oid)
+            done = s["status"] in ("FILLED", "CANCELED", "REJECTED", "EXPIRED", "REPLACED")
+            if not done:
+                if time.time() - o["ts"] > config.TRADE_LIVE_ORDER_MIN * 60 and not o.get("cancel"):
+                    schwab.cancel(st, oid)
+                    o["cancel"] = True
+                continue
+            pt["orders"].pop(oid)
+            pt["cash"] += o["reserve"]
+            if s["filled"] > 0:
+                _open(run, o["sym"], s["filled"], s["avg"] or o["price"], o["info"])
+            else:
+                run.notify(f"⚪ <b>{o['sym']}</b>: פקודת הקנייה לא בוצעה (אין מוכרים במחיר) ובוטלה.")
+        for sym, p in list(pt["pos"].items()):
+            sel = p.get("selling")
+            if not sel:
+                continue
+            s = schwab.order(st, sel["oid"])
+            new = s["filled"] - sel["booked"]
+            if new > 0:
+                first = sel["booked"] == 0
+                sel["booked"] = s["filled"]
+                closed = _book(run, sym, new, s["avg"] or sel["price"], sel["why"], fee=first)
+                if closed:
+                    continue
+            if s["status"] in ("FILLED", "CANCELED", "REJECTED", "EXPIRED", "REPLACED"):
+                p.pop("selling", None)     # what is left is managed again next minute (new price)
+            elif time.time() - sel["ts"] > config.TRADE_LIVE_SELL_RETRY_MIN * 60 and not sel.get("cancel"):
+                schwab.cancel(st, sel["oid"])
+                sel["cancel"] = True
+    except schwab.NotConnected:
+        log("trader: Schwab not connected")
+
+
 def _note(run, sym, key, text):
     """One information message per stock per day (no spam)."""
-    notes = run.st["pt"]["notes"]
+    notes = init(run.st)["notes"]
     k = f"{sym}:{key}:{et_now().date()}"
     if k not in notes:
         notes[k] = time.time()
@@ -412,6 +574,8 @@ def _heavy_selling(run, sym, p, bars, sell):
 def _manage(run, sym, p):
     st = run.st
     now = et_now()
+    if p.get("selling"):      # a real sell order is working; _sync_orders follows it
+        return
     bars, _ = get_bars(sym)
     new = [b for b in bars if b["t"] > p["last_t"]]
     for b in new:
@@ -442,12 +606,12 @@ def _manage(run, sym, p):
     if not bars:
         return
     last = bars[-1]["c"]
-    sell = last - tick(last)
+    sell = sell_price(sym, last)
     # dilution or bad news after we bought -> out at once
-    if st["pt"]["dil"].get(sym, 0) > p["opened"]:
+    if init(st)["dil"].get(sym, 0) > p["opened"]:
         _sell(run, sym, p["shares"], sell, "🔴 זוהה דיווח על דילול / הנפקה – יציאה מיידית")
         return
-    neg = st["pt"]["neg"].get(sym)
+    neg = init(st)["neg"].get(sym)
     if neg and neg[0] > p["opened"]:
         _sell(run, sym, p["shares"], sell, f"🔴 חדשה שלילית ({neg[1]}) – יציאה מיידית")
         return
@@ -527,7 +691,7 @@ def trades_text(st):
 
 
 def _reports(run):
-    pt, now = run.st["pt"], et_now()
+    pt, now = init(run.st), et_now()
     day = str(now.date())
     if _session(now) != "post" or pt["day_rep"] == day:
         return
@@ -565,7 +729,10 @@ def cycle(run):
     st = run.st
     pt = init(st)
     _bars.clear()
+    _quotes.clear()
     now = et_now()
+    if live():
+        _sync_orders(run)
     day = str(now.date())
     pt["dil"] = {s: t for s, t in pt["dil"].items() if _days(t) < 30}
     pt["neg"] = {s: v for s, v in pt["neg"].items() if _days(v[0]) < 30}
@@ -643,7 +810,14 @@ def dashboard(st):
                     "url": p.get("url", ""), "bars": bars})
     cands = [{"sym": s, "cat": c["cat"], "score": c["score"], "why": c.get("why", ""), "ts": c["ts"],
               "title": c.get("title", ""), "url": c.get("url", "")} for s, c in pt["cands"].items()]
-    return {"v": 1, "updated": int(time.time()), "start": pt["start"], "cash": round(pt["cash"], 2),
+    orders = [{"sym": o["sym"], "qty": o["qty"], "price": o["price"], "ts": o["ts"], "side": "BUY"}
+              for o in pt["orders"].values()]
+    orders += [{"sym": s, "qty": p["selling"]["qty"], "price": p["selling"]["price"], "ts": p["selling"]["ts"],
+                "side": "SELL"} for s, p in pt["pos"].items() if p.get("selling")]
+    sw = schwab.status() if schwab.enabled() else None
+    return {"v": 1, "mode": config.TRADE_MODE, "paused": pt["paused"], "orders": orders,
+            "schwab": {"connected": bool(sw and sw.get("connected")), "days_left": sw and sw.get("days_left")},
+            "updated": int(time.time()), "start": pt["start"], "cash": round(pt["cash"], 2),
             "equity": round(equity(pt), 2), "fees": round(pt["fees"], 2), "pos": pos, "cands": cands,
             "closed": pt["closed"][-150:], "skips": pt["skips"], "eq": pt["eq_hist"][-1500:],
             "fee": config.TRADE_FEE, "rr": config.TRADE_RR}

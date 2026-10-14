@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, dilution, market, rules, state, telegram, trader
+from . import ai, config, dilution, market, rules, schwab, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -34,8 +34,10 @@ HELP = """🤖 <b>בוט התראות OTC</b>
 /portfolio – התיק הווירטואלי של סוכן המסחר
 /trades – 10 המכירות האחרונות של הסוכן
 /dashboard – מסך המסחר (גרפים, פוזיציות, היסטוריה)
+/schwab – מצב החיבור ל-Schwab + כפתור התחברות
+/stop – הסוכן מפסיק לקנות (ממשיך לנהל מה שבידיו) · /go – חוזר לקנות
 /help – העזרה הזו
-אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code> · <code>מסך</code>
+אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code> · <code>מסך</code> · <code>שוואב</code> · <code>עצור</code> · <code>המשך</code>
 
 <b>סוכן מסחר (כסף וירטואלי, $5,000, עמלת Schwab $6.95 לפעולה):</b>
 קונה אחרי חדשה חיובית חזקה רק ביחס 1:3 לפחות אחרי עמלות, לא נוגע במדללים פעילים,
@@ -74,7 +76,7 @@ class Run:
         self.start = time.time()
         self.sent = 0
 
-    def notify(self, text):
+    def notify(self, text, markup=None):
         if self.dry:
             print("\n" + "-" * 60 + "\n" + text, flush=True)
             self.sent += 1
@@ -82,7 +84,7 @@ class Run:
         if not self.st["owner"]:
             return False
         try:
-            telegram.send(self.st["owner"], text)
+            telegram.send(self.st["owner"], text, markup)
         except Exception as e:
             log(f"Telegram send failed: {short_err(e)}")
             return False
@@ -151,6 +153,14 @@ def command(st, text):
         return trader.portfolio_text(st)
     if cmd in ("/trades", "trades", "עסקאות"):
         return trader.trades_text(st)
+    if cmd in ("/schwab", "schwab", "שוואב"):
+        return schwab_text(st)
+    if cmd in ("/stop", "stop", "עצור"):
+        trader.init(st)["paused"] = True
+        return "⏸️ הסוכן לא יקנה מניות חדשות עד שתכתוב /go (המשך).\nמניות שכבר בידיו ממשיכות להיות מנוהלות (עצירה, יעד, דילול)."
+    if cmd in ("/go", "go", "המשך"):
+        trader.init(st)["paused"] = False
+        return "▶️ הסוכן חזר לקנות."
     if cmd in ("/dashboard", "/screen", "dashboard", "מסך"):
         return DASH_TEXT, telegram.web_app_button("📈 מסך מסחר", state.dash_url())
     if cmd in ("/test", "test", "בדיקה"):
@@ -190,6 +200,54 @@ def handle_commands(run):
             telegram.send(chat["id"], reply, markup)
         except Exception as e:
             log(f"Telegram reply failed: {short_err(e)}")
+
+
+def _login_button():
+    return {"inline_keyboard": [[{"text": "🔑 התחברות ל-Schwab", "url": schwab.login_link()}]]}
+
+
+def schwab_text(st):
+    s = schwab.status(max_age=0)
+    mode = "💵 כסף אמיתי" if config.TRADE_MODE == "live" else "🧪 כסף וירטואלי"
+    if not s:
+        return f"🏦 <b>Schwab</b>\nלא הצלחתי לבדוק את החיבור כרגע.\nמצב מסחר: {mode}"
+    if not s.get("configured"):
+        return (f"🏦 <b>Schwab</b>\nהחיבור עוד לא הוגדר – מחכים לאישור האפליקציה ב-developer.schwab.com.\n"
+                f"מצב מסחר: {mode}")
+    if s.get("connected"):
+        left = s["days_left"]
+        when = f"{left:.0f} ימים" if left >= 1.5 else f"{left * 24:.0f} שעות"
+        return (f"🏦 <b>Schwab</b> ✅ מחובר\nהחיבור בתוקף עוד {when}. אפשר להתחבר מחדש כבר עכשיו כדי לאפס ל-7 ימים.\n"
+                f"מצב מסחר: {mode}"), _login_button()
+    return f"🏦 <b>Schwab</b> ❌ לא מחובר\nלחץ על הכפתור והיכנס עם הפרטים שלך ב-Schwab.\nמצב מסחר: {mode}", _login_button()
+
+
+def schwab_check(run):
+    """Weekly login reminder: Schwab ends the API login after 7 days."""
+    st = run.st
+    sw = st.setdefault("schwab", {})
+    if not schwab.enabled() or time.time() - sw.get("chk", 0) < config.SCHWAB_CHECK_EVERY_MIN * 60:
+        return
+    sw["chk"] = time.time()
+    s = schwab.status(max_age=0)
+    if not s or not s.get("configured"):
+        return
+    day = str(et_now().date())
+    if s.get("connected"):
+        sw["was"] = True
+        left = s["days_left"]
+        if left <= config.SCHWAB_REMIND_DAYS_LEFT and sw.get("reminded") != day:
+            hours = max(1, round(left * 24))
+            text = (f"⏰ <b>תזכורת שבועית – Schwab</b>\nהחיבור של הבוט ל-Schwab יפוג בעוד כ-{hours} שעות.\n"
+                    "לחץ על הכפתור והיכנס עם הפרטים שלך (דקה אחת) – כדי שהמסחר ימשיך.")
+            if run.notify(text, _login_button()):
+                sw["reminded"] = day
+    elif sw.get("was") and sw.get("expired") != day:
+        text = ("❌ <b>החיבור ל-Schwab פג</b>\n"
+                + ("המסחר האמיתי מושהה עד שתתחבר. " if config.TRADE_MODE == "live" else "")
+                + "לחץ על הכפתור והיכנס עם הפרטים שלך.")
+        if run.notify(text, _login_button()):
+            sw["expired"] = day
 
 
 def menu_button(st):
@@ -598,6 +656,10 @@ def cycle(st, args):
         volume_check(run, force=args.force_vol)
         market_volume_check(run, force=args.force_vol)
         dilution_check(run, force=args.force_vol)
+        try:
+            schwab_check(run)
+        except Exception as e:
+            log(f"schwab check failed: {short_err(e)}")
         try:
             trader.cycle(run)
         except Exception as e:
