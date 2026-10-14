@@ -22,8 +22,12 @@ CODE_HE = {"P": "קנייה בשוק", "S": "מכירה בשוק", "C": "המר�
 
 
 def _val(block, tag):
-    m = re.search(rf"<{tag}>\s*(?:<value>)?\s*([^<]*?)\s*(?:</value>)?\s*</{tag}>", block, re.S)
-    return m.group(1).strip() if m else ""
+    """Text of <tag>, or of the <value> inside it (footnote tags may sit next to the value)."""
+    m = re.search(rf"<{tag}\b[^>]*>(.*?)</{tag}>", block, re.S)
+    if not m:
+        return ""
+    v = re.search(r"<value>(.*?)</value>", m.group(1), re.S)
+    return re.sub(r"<[^>]+>", "", v.group(1) if v else m.group(1)).strip()
 
 
 def _num(x):
