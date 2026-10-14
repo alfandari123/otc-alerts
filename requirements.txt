@@ -2,3 +2,4 @@ requests>=2.32
 cryptography>=43
 tzdata
 pypdf>=5
+websocket-client>=1.8

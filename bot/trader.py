@@ -14,7 +14,7 @@ import math
 import time
 from datetime import datetime
 
-from . import config, dilution, market, net, schwab
+from . import config, dilution, insiders, market, net, schwab
 from .util import ET, esc, et_now, fmt_price, log
 
 BARS_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1m&range=1d"
@@ -99,6 +99,40 @@ def quote(sym):
     return q
 
 
+_books = {}   # per-cycle cache: ticker -> Level 2 snapshot (None when not available)
+
+
+def book(sym):
+    """Level 2 from Schwab's stream (bids/asks with market makers), or None."""
+    if sym in _books:
+        return _books[sym]
+    res = None
+    s = schwab.status()
+    if s and s.get("connected"):
+        try:
+            res = schwab.snapshot([sym], seconds=config.TRADE_L2_SECONDS).get(sym)
+            if res and not (res["bids"] or res["asks"]):
+                res = None
+        except Exception as e:
+            log(f"trader: level 2 failed ({net.short_err(e)})")
+    _books[sym] = res
+    return res
+
+
+def book_wall(bk, low, high, our_shares):
+    """Hebrew description of a big seller sitting between `low` and `high`, or ''."""
+    if not bk or not bk["asks"]:
+        return ""
+    sizes = sorted(x["size"] for x in bk["asks"])
+    median = sizes[len(sizes) // 2] or 1
+    for x in bk["asks"]:
+        if low <= (x["price"] or 0) < high and x["size"] >= max(config.TRADE_L2_WALL_X * median,
+                                                                 config.TRADE_L2_WALL_VS_US * our_shares):
+            mm = ", ".join(m["id"] for m in x["mm"] if m.get("id"))
+            return f"${fmt_price(x['price'])}: {x['size']:,.0f} מניות" + (f" ({mm})" if mm else "")
+    return ""
+
+
 def sell_price(sym, last):
     """Price we can sell at right now: the real bid, or one tick under the last trade."""
     q = quote(sym)
@@ -180,6 +214,9 @@ def _danger(st, sym, since=None):
     neg = pt["neg"].get(sym)
     if neg and neg[0] > since:
         return f"חדשה שלילית: {neg[1]}"
+    why = insiders.danger(insiders.get(st, sym))
+    if why:
+        return why
     d = dilution.summary(sym, st, str(et_now().date()))
     if d:
         if (d.get("chg3") or 0) >= config.DILUTION_WARN_3M:
@@ -312,12 +349,20 @@ def _buy(run, sym, c):
     budget = min(equity(pt) * pct, pt["cash"] - config.TRADE_FEE)
     budget = min(budget, vol * config.TRADE_MAX_VOL_SHARE * entry)   # we must be able to get out
     shares = int(budget / entry)
+    bk = book(sym)
+    if bk and bk["bids"]:     # Level 2: buy no more than the buyers standing near the bid can take back from us
+        depth = sum(x["size"] for x in bk["bids"][:config.TRADE_L2_LEVELS])
+        shares = min(shares, int(depth * config.TRADE_L2_BID_SHARE))
     if shares * entry < config.TRADE_MIN_DOLLARS:
-        c["why"] = "אין מספיק מסחר במניה בשביל עסקה כדאית"
+        c["why"] = "אין מספיק מסחר / קונים במניה בשביל עסקה כדאית"
         return False
     target = _target(entry, risk, shares, entry)
     if target / entry - 1 > config.TRADE_MAX_TARGET:
         c["why"] = f"כדי לקבל 1:3 אחרי עמלות צריך עלייה של {(target / entry - 1) * 100:.0f}% – לא ריאלי"
+        return False
+    wall = book_wall(bk, entry, target, shares)
+    if wall:
+        c["why"] = f"Level 2: קיר מוכרים לפני היעד – {wall}"
         return False
     info = {"stop": plan["stop"], "target": target, "R": risk, "ref": plan["ref"], "cat": c["cat"],
             "score": c["score"], "title": c.get("title", ""), "url": c.get("url", ""),
@@ -355,6 +400,8 @@ def _open(run, sym, shares, entry, info):
                f"אחרי עמלות: רווח אפשרי ${net_gain:,.0f} מול הפסד אפשרי ${net_loss:,.0f} "
                f"(1:{net_gain / net_loss:.1f})\n"
                f"מחיר לפני החדשה: ${fmt_price(plan['ref'])}\n"
+               + "".join(x + "\n" for x in insiders.lines(st.get("ins", {}).get(sym, [0, None])[1]))
+               +
                f"ברווח של +{loss:.0f}% העצירה עולה למחיר הקנייה (בלי הפסד). ביעד: מוכר 2/3, ו-1/3 נשאר כבונוס "
                "אם אין סכנת דילול.")
     log("trader: bought")
@@ -560,6 +607,9 @@ def _heavy_selling(run, sym, p, bars, sell):
     wall = _seller_wall(bars)
     if wall:
         reasons.append(f"מוכר גדול יושב על ${fmt_price(wall)} (כנראה מדלל)")
+    wall2 = book_wall(book(sym), last, last * 1.5, p["shares"])
+    if wall2:
+        reasons.append(f"Level 2: קיר מוכרים – {wall2}")
     if last < p["ref"]:
         reasons.append("המחיר ירד מתחת למחיר שלפני החדשה – החדשה 'נמחקה'")
     if reasons:
@@ -730,6 +780,7 @@ def cycle(run):
     pt = init(st)
     _bars.clear()
     _quotes.clear()
+    _books.clear()
     now = et_now()
     if live():
         _sync_orders(run)
@@ -810,6 +861,9 @@ def dashboard(st):
                     "url": p.get("url", ""), "bars": bars})
     cands = [{"sym": s, "cat": c["cat"], "score": c["score"], "why": c.get("why", ""), "ts": c["ts"],
               "title": c.get("title", ""), "url": c.get("url", "")} for s, c in pt["cands"].items()]
+    for row in pos + cands:      # insiders from the daily cache only (no extra SEC calls here)
+        hit = st.get("ins", {}).get(row["sym"])
+        row["ins"] = insiders.table(hit[1]) if hit else []
     orders = [{"sym": o["sym"], "qty": o["qty"], "price": o["price"], "ts": o["ts"], "side": "BUY"}
               for o in pt["orders"].values()]
     orders += [{"sym": s, "qty": p["selling"]["qty"], "price": p["selling"]["price"], "ts": p["selling"]["ts"],

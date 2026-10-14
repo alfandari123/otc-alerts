@@ -252,11 +252,11 @@ def schwab_check(run):
 
 def menu_button(st):
     """Once: a 'trading screen' button next to the message box in the owner's chat."""
-    if st.get("menu_v") == 1 or not (st["owner"] and config.TELEGRAM_TOKEN and config.STATE_KEY):
+    if st.get("menu_v") == 2 or not (st["owner"] and config.TELEGRAM_TOKEN and config.STATE_KEY):
         return
     try:
         telegram.set_menu_button(st["owner"], "📈 מסך מסחר", state.dash_url())
-        st["menu_v"] = 1
+        st["menu_v"] = 2
     except Exception as e:
         log(f"menu button failed: {short_err(e)}")
 

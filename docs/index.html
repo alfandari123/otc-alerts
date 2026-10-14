@@ -43,12 +43,23 @@ tr:last-child td{border-bottom:0}
 .pill.g{background:#123d34;color:#5ee0c4}.pill.r{background:#3d1717;color:#ff8a80}.pill.y{background:#3d3212;color:var(--warn)}
 a{color:var(--acc)}
 footer{color:var(--mute);font-size:12px;text-align:center;padding:8px}
+.lv{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.l1{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.l1 div{font-size:11px;color:var(--mute)}.l1 b{display:block;font-size:15px;color:var(--text);direction:ltr;text-align:right}
+.book td,.book th{padding:4px 8px;font-size:12px}.book .b{color:var(--up)}.book .a{color:var(--down)}
+.tape{max-height:260px;overflow-y:auto}.tape td{padding:3px 8px;font-size:12px}
+.buy{color:var(--up)}.sell{color:var(--down)}
+.insight{padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px}
+.livebar{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.livebar input{background:#1c2230;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px;width:90px;font:inherit;direction:ltr}
+@media (max-width:520px){.lv{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header><h1>📈 מסך מסחר OTC <span id="mode" class="mute" style="font-weight:400;font-size:12px">· כסף וירטואלי</span></h1>
 <span id="upd" class="badge">טוען…</span></header>
 <main id="app"></main>
+<main id="livebox" style="padding-top:0"><section id="live"><h2>⚡ שוק חי <span class="c">Level 1 · Level 2 · עסקאות בזמן אמת</span></h2><div id="liveBody" class="empty">טוען…</div></section></main>
 <footer>הסוכן קונה ומוכר לפי מחירי Yahoo של כל דקה · קנייה צעד מחיר מעל המחיר האחרון, מכירה צעד מתחת · עמלה <span id="fee"></span> לכל פעולה</footer>
 <script>
 const RAW = "https://raw.githubusercontent.com/alfandari123/otc-alerts/state/dash.bin";
@@ -75,6 +86,15 @@ const d8 = ts => new Date(ts*1000).toLocaleString("he-IL",{day:"2-digit",month:"
 const days = ts => ((Date.now()/1000 - ts)/86400);
 const esc = s => (s||"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const tz = -new Date().getTimezoneOffset()*60; // charts show the phone's local time
+
+function insTable(rows){
+  if (!rows || !rows.length) return `<div class="insight mute">אינסיידרים: אין דיווחים ב-90 הימים האחרונים (או שהחברה לא מדווחת ל-SEC).</div>`;
+  const cl = c => c === "P" ? "buy" : (c === "S" || c === "C" || c === "144") ? "sell" : "";
+  return `<h2 style="border-top:1px solid var(--line)">אינסיידרים <span class="c">מנהלים ובעלי מניות גדולים · 90 יום</span></h2><div class="wrap"><table>
+    <tr><th>תאריך</th><th>מי</th><th>פעולה</th><th>מניות</th><th>מחיר</th></tr>` + rows.map(r => `<tr><td>${r.date.slice(8,10)}/${r.date.slice(5,7)}</td>
+    <td class="why">${esc(r.owner)}${r.role ? ` <span class="mute">(${esc(r.role)})</span>` : ""}</td><td class="${cl(r.code)}">${esc(r.what)}</td>
+    <td class="n">${r.shares ? Math.round(r.shares).toLocaleString() : ""}</td><td class="n">${r.price ? "$" + px(r.price) : ""}</td></tr>`).join("") + `</table></div>`;
+}
 
 function chart(el, h){
   const c = LightweightCharts.createChart(el, {height:h, layout:{background:{color:"#131722"}, textColor:"#8a93a6"},
@@ -115,7 +135,8 @@ function render(){
       <div>🛑 עצירה<b>$${px(p.stop)}</b></div>
       <div>מצב<b style="direction:rtl">${p.runner ? '<span class="pill g">בונוס 1/3</span>' : p.be ? '<span class="pill g">בלי הפסד</span>' : '<span class="pill y">בסיכון</span>'}</b></div>
       <div>מוחזקת<b>${days(p.opened).toFixed(1)} ימים</b></div>
-      <div style="grid-column:1/-1">סיבה<b style="direction:rtl;font-size:13px">${esc(p.cat)} · ציון ${p.score}/10 ${p.url ? `· <a href="${esc(p.url)}" target="_blank">לחדשה</a>` : ""}</b></div></div>`;
+      <div style="grid-column:1/-1">סיבה<b style="direction:rtl;font-size:13px">${esc(p.cat)} · ציון ${p.score}/10 ${p.url ? `· <a href="${esc(p.url)}" target="_blank">לחדשה</a>` : ""}</b></div></div>`
+      + insTable(p.ins);
   } else h += `<div class="empty">אין פוזיציות פתוחות כרגע.</div>`;
   h += `</section>
   ${(d.orders||[]).length ? `<section><h2>פקודות פתוחות ב-Schwab <span class="c">${d.orders.length}</span></h2><div class="wrap"><table><tr><th>מניה</th><th>פעולה</th><th>כמות</th><th>מחיר</th><th>נשלחה</th></tr>` +
@@ -157,6 +178,113 @@ function render(){
   const age = Math.round((Date.now()/1000 - d.updated)/60), u = $("#upd");
   u.textContent = age <= 10 ? "עודכן לפני " + age + " דק׳" : "עודכן " + d8(d.updated);
   u.className = "badge" + (age <= 10 ? " live" : "");
+  renderLive();
+}
+
+// ---------- live market (Schwab stream): Level 1, Level 2 and the trade tape ----------
+const SKEY = (new URLSearchParams(location.hash.slice(1))).get("s");
+const WORKER = "https://otc-schwab.range-guard.workers.dev";
+const BOOKS = ["NASDAQ_BOOK", "NYSE_BOOK"];    // which book services carry OTC stocks is checked on the first connection
+const L1F = {0:"sym",1:"bid",2:"ask",3:"last",4:"bidSize",5:"askSize",8:"vol",9:"lastSize",10:"high",11:"low",12:"close",35:"tradeTime"};
+const live = {sym:null, ws:null, si:null, l1:{}, book:null, tape:[], state:"off", err:"", rid:1};
+
+function liveSyms(){ const d = data || {pos:[], cands:[]}; return [...new Set([...d.pos.map(p => p.sym), ...d.cands.map(c => c.sym)])]; }
+function liveSend(service, command, parameters){
+  const si = live.si;
+  live.ws.send(JSON.stringify({requests:[{service, command, requestid:String(live.rid++),
+    SchwabClientCustomerId:si.schwabClientCustomerId, SchwabClientCorrelId:si.schwabClientCorrelId, parameters}]}));
+}
+function liveSub(sym){
+  live.sym = sym; live.l1 = {}; live.book = null; live.tape = [];
+  if (live.state !== "on") return renderLive();
+  liveSend("LEVELONE_EQUITIES", "SUBS", {keys:sym, fields:Object.keys(L1F).join(",")});
+  BOOKS.forEach(b => liveSend(b, "SUBS", {keys:sym, fields:"0,1,2,3"}));
+  renderLive();
+}
+async function liveStart(){
+  if (!SKEY) { live.state = "nokey"; return renderLive(); }
+  live.state = "connecting"; renderLive();
+  try {
+    const r = await fetch(WORKER + "/stream?k=" + encodeURIComponent(SKEY)), j = await r.json();
+    if (!j.access_token) { live.state = "off"; live.err = j.error || ""; return renderLive(); }
+    live.si = j.streamer;
+    live.ws = new WebSocket(j.streamer.streamerSocketUrl);
+    live.ws.onopen = () => liveSend("ADMIN", "LOGIN", {Authorization:j.access_token,
+      SchwabClientChannel:live.si.schwabClientChannel, SchwabClientFunctionId:live.si.schwabClientFunctionId});
+    live.ws.onmessage = ev => liveMsg(JSON.parse(ev.data));
+    live.ws.onclose = () => { live.state = "closed"; renderLive(); };
+  } catch(e){ live.state = "off"; live.err = String(e); renderLive(); }
+}
+function liveMsg(m){
+  (m.response || []).forEach(r => { if (r.service === "ADMIN" && r.command === "LOGIN") {
+    if ((r.content || {}).code === 0) { live.state = "on"; liveSub(live.sym || liveSyms()[0] || ""); }
+    else { live.state = "off"; live.err = (r.content || {}).msg || "login"; renderLive(); } } });
+  (m.data || []).forEach(d => (d.content || []).forEach(c => {
+    if (c.key !== live.sym) return;
+    if (d.service === "LEVELONE_EQUITIES") {
+      const prev = {...live.l1};
+      for (const [k, v] of Object.entries(c)) if (L1F[k]) live.l1[L1F[k]] = v;
+      const l = live.l1;
+      const traded = l.tradeTime !== prev.tradeTime || (l.vol !== prev.vol && prev.vol !== undefined);
+      if (traded && l.last) {     // a new trade (print): at the ask = a buyer paid up, at the bid = a seller hit the bid
+        const side = l.ask && l.last >= l.ask ? "buy" : l.bid && l.last <= l.bid ? "sell" : "";
+        live.tape.unshift({t:l.tradeTime || Date.now(), p:l.last, s:l.lastSize || 0, side});
+        live.tape = live.tape.slice(0, 300);
+      }
+    } else if (BOOKS.includes(d.service)) {
+      const lv = a => (a || []).map(x => ({p:x[0], s:x[1], n:x[2], mm:(x[3] || []).map(y => ({id:y[0], s:y[1]}))}));
+      if ((c[2] && c[2].length) || (c[3] && c[3].length)) live.book = {bids:lv(c[2]), asks:lv(c[3]), svc:d.service};
+    }
+  }));
+  renderLive();
+}
+function insight(){
+  const out = [], since = Date.now() - 5*60000, recent = live.tape.filter(x => x.t >= since);
+  const bv = recent.filter(x => x.side === "buy").reduce((a,x) => a + x.s, 0), sv = recent.filter(x => x.side === "sell").reduce((a,x) => a + x.s, 0);
+  if (bv + sv) out.push(`5 דקות אחרונות: <span class="buy">קונים ${bv.toLocaleString()}</span> מול <span class="sell">מוכרים ${sv.toLocaleString()}</span> (${Math.round(bv/(bv+sv)*100)}% קנייה)`);
+  const b = live.book;
+  if (b && b.asks.length) {
+    const sizes = b.asks.map(x => x.s).sort((a,c) => a - c), med = sizes[Math.floor(sizes.length/2)] || 1;
+    const wall = b.asks.slice(0, 6).find(x => x.s >= 5*med && x.s > 0);
+    if (wall) out.push(`🧱 קיר מוכרים ב-$${px(wall.p)}: ${wall.s.toLocaleString()} מניות` + (wall.mm.length ? ` (${wall.mm.map(m => m.id).join(", ")})` : ""));
+    const bs = b.bids.slice(0, 3).reduce((a,x) => a + x.s, 0), as = b.asks.slice(0, 3).reduce((a,x) => a + x.s, 0);
+    if (bs + as) out.push(`3 רמות ראשונות: <span class="buy">ביקוש ${bs.toLocaleString()}</span> מול <span class="sell">היצע ${as.toLocaleString()}</span>`);
+  }
+  return out;
+}
+function renderLive(){
+  const el = $("#liveBody"); if (!el) return;
+  const syms = liveSyms();
+  const bar = `<div class="livebar">${syms.map(s => `<button class="tab ${s===live.sym?"on":""}" data-l="${s}">${s}</button>`).join("")}
+    <input id="lsym" placeholder="מניה…" maxlength="6"><button class="tab" id="lgo">הצג</button></div>`;
+  let body;
+  if (live.state === "nokey" || (live.state === "off" && /login|forbidden/.test(live.err))) body = `<div class="empty">השוק החי יופעל אחרי החיבור ל-Schwab (פקודה /schwab בבוט).</div>`;
+  else if (live.state === "off" || live.state === "closed") body = `<div class="empty">השידור החי לא זמין כרגע${live.err ? " (" + esc(live.err) + ")" : ""}. <button class="tab" id="lre">התחבר שוב</button></div>`;
+  else if (live.state === "connecting") body = `<div class="empty">מתחבר ל-Schwab…</div>`;
+  else if (!live.sym) body = `<div class="empty">בחר מניה או כתוב טיקר.</div>`;
+  else {
+    const l = live.l1, spr = l.bid && l.ask ? (l.ask/l.bid - 1)*100 : null;
+    body = `<div class="l1"><div>קונים (Bid)<b class="buy">$${px(l.bid)} × ${(l.bidSize||0).toLocaleString()}</b></div>
+      <div>מוכרים (Ask)<b class="sell">$${px(l.ask)} × ${(l.askSize||0).toLocaleString()}</b></div>
+      <div>אחרון<b>$${px(l.last)}</b></div><div>פער<b>${spr == null ? "—" : spr.toFixed(0) + "%"}</b></div>
+      <div>ווליום<b>${(l.vol||0).toLocaleString()}</b></div><div>טווח היום<b>$${px(l.low)}–$${px(l.high)}</b></div></div>`
+      + insight().map(x => `<div class="insight">${x}</div>`).join("");
+    const b = live.book, rows = [];
+    if (b) for (let i = 0; i < Math.max(b.bids.length, b.asks.length) && i < 12; i++) {
+      const x = b.bids[i], y = b.asks[i];
+      rows.push(`<tr><td>${x ? (x.mm.map(m => m.id).join(",") || x.n) : ""}</td><td class="n b">${x ? x.s.toLocaleString() : ""}</td><td class="n b">${x ? "$"+px(x.p) : ""}</td>
+        <td class="n a">${y ? "$"+px(y.p) : ""}</td><td class="n a">${y ? y.s.toLocaleString() : ""}</td><td>${y ? (y.mm.map(m => m.id).join(",") || y.n) : ""}</td></tr>`);
+    }
+    body += `<div class="lv"><div><h2 style="border-top:1px solid var(--line)">Level 2 <span class="c">${b ? b.svc : "אין נתונים למניה הזו (עדיין)"}</span></h2>
+      <div class="wrap book"><table><tr><th>MM</th><th>כמות</th><th>Bid</th><th>Ask</th><th>כמות</th><th>MM</th></tr>${rows.join("")}</table></div></div>
+      <div><h2 style="border-top:1px solid var(--line)">עסקאות בזמן אמת <span class="c">${live.tape.length}</span></h2><div class="tape"><table>
+      ${live.tape.slice(0, 80).map(x => `<tr class="${x.side}"><td>${new Date(x.t).toLocaleTimeString("he-IL")}</td><td class="n">$${px(x.p)}</td><td class="n">${x.s.toLocaleString()}</td><td>${x.side === "buy" ? "קנייה" : x.side === "sell" ? "מכירה" : ""}</td></tr>`).join("")}</table></div></div></div>`;
+  }
+  el.className = ""; el.innerHTML = bar + body;
+  el.querySelectorAll("[data-l]").forEach(b => b.onclick = () => liveSub(b.dataset.l));
+  const go = () => { const v = ($("#lsym").value || "").trim().toUpperCase(); if (/^[A-Z]{1,6}$/.test(v)) liveSub(v); };
+  $("#lgo").onclick = go; $("#lsym").onkeydown = e => { if (e.key === "Enter") go(); };
+  const re = $("#lre"); if (re) re.onclick = liveStart;
 }
 
 async function tick(){
@@ -164,7 +292,7 @@ async function tick(){
   catch(e){ if (!data) $("#app").innerHTML = `<div class="err">לא הצלחתי לפתוח את הנתונים.<br>פתח את המסך מהכפתור בבוט בטלגרם (פקודה /dashboard).</div>`; $("#upd").textContent = "שגיאה"; }
 }
 if (!key) { $("#app").innerHTML = `<div class="err">🔒 המסך פרטי.<br>פתח אותו מהכפתור בבוט בטלגרם (פקודה /dashboard).</div>`; $("#upd").textContent = "נעול"; }
-else { tick(); setInterval(tick, 60000); }
+else { tick().then(liveStart); setInterval(tick, 60000); }
 </script>
 </body>
 </html>

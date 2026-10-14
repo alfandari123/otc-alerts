@@ -57,6 +57,14 @@ async function save(env, data, fresh) {
   return tok;
 }
 
+async function accessToken(env) {
+  const tok = (await env.KV.get("tok", "json")) || null;
+  if (!tok || !tok.refresh) throw new Error("login_needed");
+  if (tok.access && tok.access_exp - Date.now() > 120000) return tok.access;
+  if ((Date.now() - tok.login_ts) / 86400000 >= REFRESH_DAYS) throw new Error("login_needed");
+  return (await save(env, await tokenCall(env, { grant_type: "refresh_token", refresh_token: tok.refresh }), false)).access;
+}
+
 function configured(env) {
   return Boolean(env.SCHWAB_APP_KEY && env.SCHWAB_SECRET);
 }
@@ -87,6 +95,23 @@ export default {
         return page("החיבור נכשל", "Schwab דחו את הבקשה. נסה שוב בעוד דקה. (" + String(e.message).replace(/[<>&]/g, "") + ")", false);
       }
       return page("מחובר ל-Schwab", "הבוט יכול לסחור ב-7 הימים הקרובים. אפשר לסגור את הדף. תקבל תזכורת בטלגרם לפני שהחיבור יפוג.");
+    }
+
+    // ----- trading screen: what the page needs to open Schwab's live stream (Level 1 / Level 2 / trades) -----
+    if (path === "/stream") {
+      const cors = { "Access-Control-Allow-Origin": "*", "content-type": "application/json" };
+      if (url.searchParams.get("k") !== env.LOGIN_KEY) return new Response('{"error":"forbidden"}', { status: 403, headers: cors });
+      try {
+        const access = await accessToken(env);
+        const r = await fetch("https://api.schwabapi.com/trader/v1/userPreference", {
+          headers: { Authorization: "Bearer " + access, Accept: "application/json" } });
+        const pref = await r.json();
+        const info = (pref.streamerInfo || [])[0];
+        if (!info) return new Response(JSON.stringify({ error: "no_streamer", status: r.status }), { status: 502, headers: cors });
+        return new Response(JSON.stringify({ access_token: access, streamer: info }), { headers: cors });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e.message) }), { status: 401, headers: cors });
+      }
     }
 
     // ----- bot endpoints -----

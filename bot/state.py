@@ -91,7 +91,8 @@ def dash_key():
 
 def dash_url():
     k = base64.urlsafe_b64encode(dash_key()).decode().rstrip("=")
-    return f"{config.DASH_PAGE}#k={k}"
+    live = f"&s={config.SCHWAB_LOGIN_KEY}" if config.SCHWAB_LOGIN_KEY else ""   # opens Schwab's live stream on the page
+    return f"{config.DASH_PAGE}#k={k}{live}"
 
 
 def save_dash(data):
