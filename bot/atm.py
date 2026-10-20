@@ -11,8 +11,8 @@ WINDOW = 60            # trading days looked at (~3 months)
 MIN_TOUCHES = 3        # times the floor / the ceiling were reached
 MIN_SPREAD_DAYS = 20   # first and last touch at least this far apart
 MIN_SWINGS = 2         # full floor -> ceiling -> floor trips
-MIN_RATIO = 1.4        # ceiling at least 40% above the floor
-MIN_PRICE = 0.0005     # under this one tick is 20%+ and floor/ceiling lose meaning
+MIN_RATIO = 1.15       # ceiling above the floor by more than one tick's noise (no fixed % target: sell AT the ceiling)
+MIN_PRICE = 0.0001     # trips included (buy 0.0001, sell 0.0002 is his classic round)
 MAX_BREAK = 0.05       # share of days allowed to close outside the range
 MIN_ACTIVE = 0.8       # share of days with trades
 MIN_DOLLARS = 2000     # average dollar volume per day
@@ -23,7 +23,8 @@ def tick(p):
 
 
 def _tol(p):
-    return max(tick(p), p * 0.03)
+    """How close counts as touching a level: the exact tick for sub-penny prices, 3% above that."""
+    return 1e-9 if p < 0.001 else max(tick(p), p * 0.03)
 
 
 def _level(values, pct):
@@ -100,3 +101,16 @@ def plan(rng, fee, budget, rr=3.0):
         return None
     return {"entry": entry, "stop": stop, "stop_fill": stop_fill, "target": target, "shares": shares,
             "gain": gain, "loss": loss}
+
+
+def plan_ticks(rng, fee, budget, min_gain=0.0):
+    """His way: a buy order waiting AT the floor, a sell order waiting AT the ceiling, no price stop (an exit only
+    for dilution or a floor that is gone for good). None when a round would not make money after fees."""
+    f, c = rng["floor"], rng["ceiling"]
+    shares = int(budget / f)
+    if shares <= 0:
+        return None
+    gain = shares * (c - f) - 2 * fee
+    if gain < min_gain * shares * f:
+        return None
+    return {"entry": f, "target": c, "shares": shares, "gain": gain}
