@@ -106,11 +106,14 @@ def liquidity(sym):
     return {"days": days, "of": len(rows), "dollars": dollars}
 
 
-def liquidity_lines(sym):
-    """Hebrew line for alerts: can this stock actually be bought and sold?"""
-    if not sym:
-        return []
-    q = liquidity(sym)
+def liquidity_lines(*syms):
+    """Hebrew line for alerts: can this stock actually be bought and sold?
+    Several tickers may be given (after a ticker change Yahoo still knows only the old one)."""
+    q = None
+    for sym in syms:
+        q = liquidity(sym) if sym else None
+        if q and (q["days"] or sym == syms[-1]):
+            break
     if not q:
         return []
     if q["days"] == 0:

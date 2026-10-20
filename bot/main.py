@@ -430,7 +430,7 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None):
         lines.append("⚠️ " + esc(res["risk_he"]))
     lines += deal.lines(it.get("deal"), (dil or {}).get("tso"))
     lines += dilution.lines(dil)
-    lines += market.liquidity_lines(sym)
+    lines += market.liquidity_lines(*syms[:2])
     lines.append(_links(it, sym))
     if not res:
         lines.append("<i>(בלי AI – זיהוי לפי מילות מפתח)</i>")
@@ -450,7 +450,7 @@ def action_message(it, rule, syms, price, hit, dil=None):
     if it.get("text"):
         lines.append(esc(it["text"]))
     lines += dilution.lines(dil)
-    lines += market.liquidity_lines(sym)
+    lines += market.liquidity_lines(*syms[:2])
     lines.append(_links(it, sym))
     return "\n".join(lines)
 
