@@ -154,9 +154,24 @@ def deal_check(url):
         print("DEAL line:", line)
 
 
+def radar_check(sym, company):
+    """The radar's sources for one stock (bot/radar.py) - counts and titles only."""
+    import time as _t
+    from . import radar
+    st = {"radar": {"last": 0, "seen": {}, "cik": {}}}
+    print("RADAR cik:", radar._cik(st, sym, company))
+    p = {"opened": _t.time() - 30 * 86400, "company": company}
+    for f in radar._filings(st, sym, p)[:5]:
+        print("RADAR filing:", f["src_label"], f["title"], f["url"])
+    for n in radar._news(sym, company)[:5]:
+        print("RADAR news:", n["src_label"], "|", n["title"][:100])
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if "radar" in sys.argv:
+        return radar_check(sys.argv[2], " ".join(sys.argv[3:]))
     if "deal" in sys.argv:
         return deal_check(sys.argv[-1])
     if "ins" in sys.argv:

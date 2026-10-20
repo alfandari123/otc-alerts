@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, deal, dilution, market, rules, schwab, state, telegram, trader
+from . import ai, config, deal, dilution, market, radar, rules, schwab, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -668,6 +668,10 @@ def cycle(st, args):
             schwab_check(run)
         except Exception as e:
             log(f"schwab check failed: {short_err(e)}")
+        try:
+            radar.scan(run)
+        except Exception as e:
+            log(f"radar: FAILED ({short_err(e)})")
         try:
             trader.cycle(run)
         except Exception as e:

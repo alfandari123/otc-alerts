@@ -73,6 +73,7 @@ TRADE_WINDOW_MIN = 120        # look for an entry up to 2 hours after the news (
 TRADE_ENTRY_FROM = 9 * 60 + 35     # New York time, minutes after midnight
 TRADE_ENTRY_UNTIL = 15 * 60 + 30
 TRADE_EOD_MIN = 15 * 60 + 50       # end-of-day checks
+TRADE_OPEN_CALM_MIN = 15          # first 15 minutes: dips under the stop must CLOSE under it; review at 9:45
 TRADE_TRAIL_AFTER_R = 2.0     # after +2R the stop trails 1R below the high
 TRADE_TAKE_PART = 2 / 3       # at the target sell 2/3, keep 1/3 as a bonus (only when no dilution danger)
 TRADE_RUNNER_LOCK_R = 2.0     # the bonus part's stop is at least +2R (profit locked)
@@ -90,6 +91,9 @@ TRADE_WALL_BARS = 30          # seller wall: in the last 30 bars ...
 TRADE_WALL_TOUCHES = 8        # ... the same high touched 8+ times ...
 TRADE_WALL_VOL_X = 2.0        # ... on 2x the normal volume, without a break
 TRADE_EQ_EVERY_MIN = 15       # portfolio value history for the trading screen
+
+# --- Radar for held stocks: Google News + SEC filings by company number (bot/radar.py) ---
+RADAR_EVERY_MIN = 10
 
 # --- Housekeeping ---
 WATCHLIST_MAX = 150
