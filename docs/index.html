@@ -190,9 +190,9 @@ function render(){
     c.addLineSeries({color:"#f0b429", lineWidth:1, priceLineVisible:false, lastValueVisible:false, title:"VWAP", priceFormat:fmt}).setData(vw);
     c.addLineSeries({color:"#c77dff", lineWidth:1, priceLineVisible:false, lastValueVisible:false, title:"EMA9", priceFormat:fmt}).setData(em);
     cs.createPriceLine({price:p.entry, color:"#4c8dff", lineWidth:1, lineStyle:0, title:"קנייה"});
-    cs.createPriceLine({price:p.stop, color:"#ef5350", lineWidth:1, lineStyle:2, title:"עצירה"});
-    if (!p.runner) cs.createPriceLine({price:p.target, color:"#26a69a", lineWidth:1, lineStyle:2, title:"יעד"});
-    if (p.ref) cs.createPriceLine({price:p.ref, color:"#8a93a6", lineWidth:1, lineStyle:1, title:"לפני החדשה"});
+    cs.createPriceLine({price:p.stop, color:"#ef5350", lineWidth:1, lineStyle:2, title:p.kind==="atm"?"רצפה":"עצירה"});
+    if (!p.runner) cs.createPriceLine({price:p.target, color:"#26a69a", lineWidth:1, lineStyle:2, title:p.kind==="atm"?"תקרה":"יעד"});
+    if (p.ref && p.kind!=="atm") cs.createPriceLine({price:p.ref, color:"#8a93a6", lineWidth:1, lineStyle:1, title:"לפני החדשה"});
     c.timeScale().fitContent();
   }
   const age = Math.round((Date.now()/1000 - d.updated)/60), u = $("#upd");

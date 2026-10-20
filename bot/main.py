@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, deal, dilution, inbox, market, radar, rules, schwab, state, telegram, trader
+from . import ai, atm_trader, config, deal, dilution, inbox, market, radar, rules, schwab, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -677,6 +677,10 @@ def cycle(st, args):
             trader.cycle(run)
         except Exception as e:
             log(f"trader: FAILED ({short_err(e)})")
+        try:
+            atm_trader.cycle(run)
+        except Exception as e:
+            log(f"atm: FAILED ({short_err(e)})")
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
         if config.GEMINI_API_KEY:   # a one-off timeout is not an outage; only a bad key / used-up quota is

@@ -93,11 +93,12 @@ def scan(run):
     st = run.st
     pt = trader.init(st)
     rd = st.setdefault("radar", {"last": 0, "seen": {}, "cik": {}})
-    if not pt["pos"] or time.time() - rd["last"] < config.RADAR_EVERY_MIN * 60:
+    held = {**pt["pos"], **(pt.get("atm") or {}).get("pos", {})}          # news + ATM strategies
+    if not held or time.time() - rd["last"] < config.RADAR_EVERY_MIN * 60:
         return
     rd["last"] = time.time()
-    rd["seen"] = {s: v for s, v in rd["seen"].items() if s in pt["pos"]}
-    for sym, p in list(pt["pos"].items()):
+    rd["seen"] = {s: v for s, v in rd["seen"].items() if s in held}
+    for sym, p in list(held.items()):
         first = sym not in rd["seen"]
         seen = rd["seen"].setdefault(sym, [])
         items = []
@@ -125,4 +126,4 @@ def scan(run):
                 lines.append("זוהה: " + esc(" · ".join(rule["labels"][:3])))
             run.notify("\n".join(lines))
         rd["seen"][sym] = seen[-300:]
-    log(f"radar: {len(pt['pos'])} positions checked")
+    log(f"radar: {len(held)} positions checked")

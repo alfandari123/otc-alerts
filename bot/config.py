@@ -92,6 +92,21 @@ TRADE_WALL_TOUCHES = 8        # ... the same high touched 8+ times ...
 TRADE_WALL_VOL_X = 2.0        # ... on 2x the normal volume, without a break
 TRADE_EQ_EVERY_MIN = 15       # portfolio value history for the trading screen
 
+# --- "ATM stocks" strategy (bot/atm_trader.py, virtual money; off in live mode for now) ---
+ATM_ON = True
+ATM_BUDGET_PCT = 0.20         # at most 20% of the portfolio in ATM stocks
+ATM_MAX_POS = 5
+ATM_MAX_TRADE = 500.0
+ATM_MIN_TRADE = 25.0
+ATM_QUEUE_X = 3               # sub-penny queue: filled after 3x our size traded at our price (or it went through)
+ATM_NEWS_TRAIL = 0.25         # fresh news at the ceiling: no sale there, trailing stop 25% under the high
+ATM_ADD_ON = True             # one seller dumped under the floor (no dilution): buy once more, cheaper
+ATM_HEAVY_X = 2               # a day closing under the floor on 2x volume counts as a break day; 2 in a row = out
+ATM_MAX_DAYS = 90
+ATM_COOLDOWN_DAYS = 30        # after a dilution / broken-floor exit, leave the stock alone
+ATM_SCAN_EVERY_H = 20         # the scan runs outside market hours, about once a day
+ATM_SCAN_PAGES = 20           # 20 x 50 most active OTC stocks
+
 # --- Radar for held stocks: Google News + SEC filings by company number (bot/radar.py) ---
 RADAR_EVERY_MIN = 10
 

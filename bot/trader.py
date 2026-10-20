@@ -170,7 +170,8 @@ def sell_price(sym, last):
 
 
 def equity(pt):
-    return pt["cash"] + sum(p["shares"] * p.get("last", p["entry"]) for p in pt["pos"].values())
+    held = list(pt["pos"].values()) + list((pt.get("atm") or {}).get("pos", {}).values())   # news + ATM strategies
+    return pt["cash"] + sum(p["shares"] * p.get("last", p["entry"]) for p in held)
 
 
 def _session(now):
@@ -207,6 +208,10 @@ def on_news(st, sym, score, cat, it, price):
     pt = init(st)
     if sym in pt["pos"]:
         pt["pos"][sym]["news"] = [time.time(), cat]     # fresh good news for a stock we hold
+        return
+    atm_pos = (pt.get("atm") or {}).get("pos", {})
+    if sym in atm_pos:
+        atm_pos[sym]["news"] = [time.time(), cat]       # an ATM stock with news: do not sell it at the ceiling
         return
     if sym in pt["cands"]:
         return
@@ -813,6 +818,17 @@ def portfolio_text(st):
         lines.append("\n<b>במעקב לקנייה:</b>")
         for s, c in pt["cands"].items():
             lines.append(f"• {s} – {esc(c['cat'])}" + (f" · {esc(c['why'])}" if c.get("why") else ""))
+    a = pt.get("atm") or {}
+    if a.get("pos"):
+        lines.append("\n<b>🏧 מניות כספומט:</b>")
+        for s, p in a["pos"].items():
+            ch = (p.get("last", p["entry"]) / p["entry"] - 1) * 100
+            lines.append(f"• <b>{s}</b> {p['shares']:,} × ${fmt_price(p['entry'])} · עכשיו ${fmt_price(p.get('last'))} "
+                         f"({ch:+.0f}%) · רצפה ${fmt_price(p['floor'])} ↔ תקרה ${fmt_price(p['ceiling'])}"
+                         + (" · חדשה: לא מוכר בתקרה" if p.get("trail") else ""))
+    if a.get("ranges"):
+        lines.append("🏧 במעקב: " + " · ".join(f"{s} {fmt_price(x['floor'])}↔{fmt_price(x['ceiling'])}"
+                                                for s, x in a["ranges"].items()))
     lines += ["", "<b>מאז ההתחלה:</b>", _stats(pt["closed"])]
     return "\n".join(lines)
 
@@ -1011,6 +1027,9 @@ def dashboard(st):
                     "opened": p["opened"], "cat": p["cat"], "score": p["score"], "runner": p["runner"],
                     "be": p["be"], "ref": p.get("ref"), "basis": round(p["basis"], 2), "title": p.get("title", ""),
                     "url": p.get("url", ""), "bars": bars})
+    from . import atm_trader            # here, not at the top: atm_trader imports this module
+    atm_pos, atm_ranges = atm_trader.dashboard_rows(st)
+    pos += atm_pos
     cands = [{"sym": s, "cat": c["cat"], "score": c["score"], "why": c.get("why", ""), "ts": c["ts"],
               "title": c.get("title", ""), "url": c.get("url", "")} for s, c in pt["cands"].items()]
     for row in pos + cands:      # insiders from the daily cache only (no extra SEC calls here)
@@ -1026,4 +1045,4 @@ def dashboard(st):
             "updated": int(time.time()), "start": pt["start"], "cash": round(pt["cash"], 2),
             "equity": round(equity(pt), 2), "fees": round(pt["fees"], 2), "pos": pos, "cands": cands,
             "closed": pt["closed"][-150:], "skips": pt["skips"], "eq": pt["eq_hist"][-1500:],
-            "fee": config.TRADE_FEE, "rr": config.TRADE_RR}
+            "fee": config.TRADE_FEE, "rr": config.TRADE_RR, "atm_ranges": atm_ranges}
