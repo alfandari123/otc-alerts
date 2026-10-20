@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, config, deal, dilution, market, radar, rules, schwab, state, telegram, trader
+from . import ai, config, deal, dilution, inbox, market, radar, rules, schwab, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -658,6 +658,7 @@ def cycle(st, args):
     items = []
     try:
         handle_commands(run)
+        inbox.apply(run, _tickers)
         menu_button(st)
         items = collect(run)
         process(run, items)

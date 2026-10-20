@@ -61,6 +61,10 @@ jobs:
           else
             echo "No saved state yet (first run)."
           fi
+          # commands left from Claude's PC (tools/bot_cmd.py), encrypted; applied once each by the bot
+          if git ls-remote --exit-code --heads origin inbox > /dev/null; then
+            git fetch -q --depth=1 origin inbox && git show FETCH_HEAD:inbox.bin > inbox.bin || true
+          fi
 
       - name: Run bot
         env:
