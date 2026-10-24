@@ -21,6 +21,18 @@ He wants to catch news that can push a stock price UP, for example:
 - big contracts, real revenue, buybacks
 Bad for shareholders: new share issuance, convertible notes, Reg A / S-1 offerings, increase in authorized shares,
 reverse split, going dark, delisting, bankruptcy, SEC trading suspension, Caveat Emptor.
+How OTC news usually plays out (his trading course):
+- PUMP that can last days or weeks: merger (strongest; with a closing date the price runs up into the date), big
+  contract with real numbers and a known partner, a notable appointee, CANCELLATION of a planned reverse split (can
+  jump hundreds of % the same day), debt cancelled or settled with a noteholder, an insider buying (Form 4) above the
+  market price, a buyback, a much stronger report, a forward split, a dividend announcement. An LOI runs up slowly
+  into its date but usually never closes.
+- POP AND DROP (quick spike, no follow-through): reduction of authorized shares, news that was already announced or
+  expected, a bombastic headline with no substance in the body (tiny or far-future amounts).
+- SELL: contract or merger cancelled, reverse split (can drop ~90% in minutes), increase in authorized shares (unless
+  tied to a merger), share offering below the market price, promises not kept, insiders selling, new debt (future
+  dilution), a grace period / delinquent filer flag. A delinquent company that FILES its report removes the pain and
+  can bounce.
 
 Analyze the item below and answer ONLY with JSON:
 {{
@@ -30,6 +42,7 @@ Analyze the item below and answer ONLY with JSON:
  "category_he": "short category in Hebrew, 2-4 words",
  "summary_he": "1-3 short, simple Hebrew sentences: what happened and why it matters to the share price",
  "risk_he": "short Hebrew note on red flags or pump signs (vague promises, no numbers, promotion, dilution); empty string if none",
+ "move": "pump" | "pop_drop" | "sell" | "none", the likely price behaviour per the patterns above,
  "ticker": "the company's OTC ticker if it appears in the text, else empty string"
 }}
 Be skeptical: vague, promotional or routine news (conferences, minor partnerships, "exploring opportunities") gets a low score.

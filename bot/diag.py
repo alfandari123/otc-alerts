@@ -91,6 +91,63 @@ def ai_item():
           "| error:", ai.last_error)
 
 
+def movetest(limit=60):
+    """Course news taxonomy check: the AI labels recent OTC Markets news pump / pop_drop / sell / none, then we look
+    at what the price really did 1, 3 and 5 trading days later (Yahoo daily bars)."""
+    import statistics
+    from . import ai
+    from .sources import otcm
+    from .util import fmt_price
+    now = time.time()
+    rows = []
+    for page in range(1, 8):
+        recs = otcm._get("/news-otcapi/news", page=page, pageSize=100, sortOn="releaseDate", sortDir="DESC").json()
+        recs = recs.get("records") or []
+        rows += recs
+        if not recs or otcm._ts(recs[-1].get("releaseDate")) < now - 16 * 86400:
+            break
+    seen, out = set(), []
+    for r in rows:
+        sym, ts = (r.get("symbol") or "").upper(), otcm._ts(r.get("releaseDate"))
+        if not sym or sym in seen or not (now - 16 * 86400 < ts < now - 4 * 86400):
+            continue
+        try:
+            q = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1mo",
+                             headers={"User-Agent": config.BROWSER_UA}, timeout=20).json()["chart"]["result"][0]
+            t, c, h = q["timestamp"], q["indicators"]["quote"][0]["close"], q["indicators"]["quote"][0]["high"]
+        except Exception:
+            continue
+        bars = [(t[i], c[i], h[i]) for i in range(len(t)) if c[i] is not None]
+        before = [b for b in bars if b[0] < ts - 6 * 3600]
+        after = [b for b in bars if b[0] >= ts - 6 * 3600]
+        if not before or len(after) < 5 or not 0 < before[-1][1] <= config.MAX_PRICE:
+            continue
+        seen.add(sym)
+        it = {"id": r["id"], "src": "OTCM", "src_label": "OTC Markets news", "news_id": r["id"], "syms": [sym],
+              "tier": (r.get("tier") or {}).get("description") or "", "company": "", "title": r.get("title") or "",
+              "text": r.get("title") or ""}
+        otcm.enrich(it)
+        res = ai.analyze(it, before[-1][1]) or {}
+        ref = before[-1][1]
+        ret = lambda k: after[k - 1][1] / ref - 1
+        out.append({"sym": sym, "move": res.get("move") or "?", "score": res.get("score"), "r1": ret(1),
+                    "r3": ret(3), "r5": ret(5), "up3": max(b[2] or 0 for b in after[:3]) / ref - 1,
+                    "title": it["title"][:70], "ref": ref})
+        print(f"{sym:6} {out[-1]['move']:8} s{out[-1]['score']} ref {fmt_price(ref)}  1d {ret(1):+.0%}  3d {ret(3):+.0%}"
+              f"  5d {ret(5):+.0%}  max3 {out[-1]['up3']:+.0%}  | {out[-1]['title']}")
+        if len(out) >= limit:
+            break
+        time.sleep(1)
+    print("\nby move (median 1d / 3d / 5d, max up in 3 days, share up after 5 days):")
+    for m in ("pump", "pop_drop", "sell", "none", "?"):
+        g = [x for x in out if x["move"] == m]
+        if g:
+            med = lambda k: statistics.median(x[k] for x in g)
+            print(f"  {m:8} n={len(g):3}  {med('r1'):+.0%} / {med('r3'):+.0%} / {med('r5'):+.0%}  max3 {med('up3'):+.0%}"
+                  f"  up5 {sum(x['r5'] > 0 for x in g) / len(g):.0%}")
+    print("model:", ai._model, "| error:", ai.last_error)
+
+
 def dil():
     """OTC Markets share-data endpoints (profile -> security id -> share history), 3 tries each."""
     base = "https://backend.otcmarkets.com"
@@ -176,6 +233,8 @@ def main():
         return deal_check(sys.argv[-1])
     if "ins" in sys.argv:
         return ins()
+    if "movetest" in sys.argv:
+        return movetest()
     if "prn" in sys.argv:
         return prn()
     if "dil" in sys.argv:

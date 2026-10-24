@@ -28,12 +28,12 @@ MAX_DAYS = 60
 FLOOR_GONE = 10
 
 
-def simulate(sym, bars, conservative):
+def simulate(sym, bars, conservative, check=False):
     trades, d = [], atm.WINDOW
     while d < len(bars):
         rng = atm.find_range(bars[:d])
         b = bars[d]
-        if not rng or b["l"] > rng["floor"] + 1e-9 or not b["v"]:
+        if not rng or b["l"] > rng["floor"] + 1e-9 or not b["v"] or (check and atm.checklist(bars[:d], rng)):
             d += 1
             continue
         avg_v = sum(x["v"] for x in bars[d - atm.WINDOW:d]) / atm.WINDOW
@@ -84,7 +84,7 @@ def main():
         rows = otcm.volume_leaders(pages=8)
         syms = sorted({(r.get("symbol") or "").upper() for r in rows if 0 < (r.get("price") or 0) <= 0.01} - {""})
     print(f"{len(syms)} tickers")
-    opt, cons, now = [], [], []
+    opt, cons, chk, now = [], [], [], []
     for s in syms:
         try:
             bars = daily(s)
@@ -93,12 +93,14 @@ def main():
             continue
         opt += simulate(s, bars, False)
         cons += simulate(s, bars, True)
+        chk += simulate(s, bars, True, check=True)
         r = atm.find_range(bars)
         if r:
             now.append((s, r, bars[-1]["c"]))
         time.sleep(0.3)
     report("optimistic fills", opt)
     report("conservative fills", cons)
+    report("conservative fills + course checklist (dump days, ran up from far lower)", chk)
     print("\nin a range today:")
     for s, r, last in now:
         print(f"  {s:6} floor {r['floor']} ceiling {r['ceiling']} last {last} touches {r['touches_f']}/"

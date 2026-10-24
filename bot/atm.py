@@ -84,6 +84,29 @@ def find_range(bars):
             "swings": trips, "dollars": dollars}
 
 
+DUMP_X = 3.0           # checklist: a day with this many times the 30-day average volume...
+DUMP_DAYS = 30         # ...that closed lower (and did not break out up) = a dump, likely dilution
+LOOKBACK = 120         # checklist: days before the range window looked at for much lower prices
+RAN_UP = 0.5           # ...if the stock traded under half the floor there, holders from far lower can dump it back
+
+
+def checklist(bars, rng):
+    """His ATM checklist on daily bars: '' when the stock passes, else a short Hebrew reason.
+    Dump days (heavy volume + lower close, no breakout up) hint at a diluter; a range far above where the stock traded
+    a few months ago has holders from much lower prices who can push it back down."""
+    w = bars[-DUMP_DAYS:]
+    avg = sum(b["v"] for b in w) / max(1, len(w))
+    for i in range(1, len(w)):
+        b, prev = w[i], w[i - 1]
+        top = max(x["h"] for x in w[max(0, i - 5):i])
+        if avg and b["v"] >= DUMP_X * avg and b["c"] < prev["c"] - 1e-9 and b["h"] <= top + 1e-9:
+            return "יום זריקה בווליום חריג בחודש האחרון (סימן לדילול)"
+    before = bars[-(WINDOW + LOOKBACK):-WINDOW]
+    if before and min(b["l"] for b in before if b["v"] or True) < rng["floor"] * RAN_UP - 1e-9:
+        return "המניה נסחרה במחירים נמוכים בהרבה בחודשים האחרונים (מחזיקים יכולים לזרוק אותה בחזרה)"
+    return ""
+
+
 def plan(rng, fee, budget, rr=3.0):
     """Entry / stop / target for a range trade, or None when 1:3 after fees is not possible."""
     f, c = rng["floor"], rng["ceiling"]
