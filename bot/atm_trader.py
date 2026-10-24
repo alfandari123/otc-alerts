@@ -11,12 +11,14 @@
   breaking again day after day on heavy volume) -> sell at once. One seller dumping at market (a burst that closes
   back on/above the floor) -> hold, and buy more at the cheaper price once (no more than the first buy).
 - Own budget: at most ATM_BUDGET_PCT of the portfolio, ATM_MAX_POS stocks, each <= 2% of the daily volume.
+  A "good ATM" (many full swings, many touches, no dilution signs) may take ATM_GOOD_VOL_SHARE of the volume, up to
+  ATM_GOOD_MAX_TRADE.
 Positions live in pt["atm"]["pos"] (kind "atm"); cash, fees and closed trades are shared with the news strategy.
 """
 import time
 from datetime import datetime
 
-from . import atm, config, net, trader
+from . import atm, config, dilution, net, trader
 from .sources import otcm
 from .util import ET, esc, et_now, fmt_price, log
 
@@ -47,6 +49,16 @@ def _daily(sym):
         if None not in (o, h, l, c):
             out.append({"t": t, "o": round(o, 6), "h": round(h, 6), "l": round(l, 6), "c": round(c, 6), "v": v or 0})
     return out
+
+
+def _good(st, sym, rng):
+    """A clean, often-repeated range with no dilution signs: worth a bigger buy."""
+    if rng["swings"] < config.ATM_GOOD_SWINGS or min(rng["touches_f"], rng["touches_c"]) < config.ATM_GOOD_TOUCHES:
+        return False
+    if trader._danger(st, sym):
+        return False
+    d = dilution.summary(sym, st, str(et_now().date()))
+    return not (d and max(d.get("chg3") or 0, d.get("chg6") or 0) >= config.ATM_GOOD_MAX_CHG6)
 
 
 def scan(run, force=False):
@@ -84,17 +96,22 @@ def scan(run, force=False):
         if not rng:
             continue
         avg_v = sum(b["v"] for b in bars[-atm.WINDOW:]) / atm.WINDOW
+        good = _good(st, sym, rng)
+        share = config.ATM_GOOD_VOL_SHARE if good else config.TRADE_MAX_VOL_SHARE
         found[sym] = {"floor": rng["floor"], "ceiling": rng["ceiling"], "last": bars[-1]["c"],
-                      "max": round(avg_v * config.TRADE_MAX_VOL_SHARE * rng["floor"], 2), "swings": rng["swings"],
-                      "touches": f"{rng['touches_f']}/{rng['touches_c']}", "tier": r.get("tierName") or ""}
+                      "max": round(avg_v * share * rng["floor"], 2), "swings": rng["swings"],
+                      "touches": f"{rng['touches_f']}/{rng['touches_c']}", "tier": r.get("tierName") or "", "good": good}
     a["ranges"] = found
     log(f"atm: scan found {len(found)} ranges in {len(info)} stocks")
     if found:
         lines = ["🏧 <b>סריקת מניות כספומט</b> – בתעלה עכשיו:"]
-        for s, x in sorted(found.items(), key=lambda kv: -kv[1]["max"]):
-            lines.append(f"• <b>{s}</b> רצפה ${fmt_price(x['floor'])} ↔ תקרה ${fmt_price(x['ceiling'])} · "
-                         f"עכשיו ${fmt_price(x['last'])} · עד ${x['max']:,.0f}")
+        for s, x in sorted(found.items(), key=lambda kv: (not kv[1]["good"], -kv[1]["max"])):
+            cap = min(x["max"], config.ATM_GOOD_MAX_TRADE if x["good"] else config.ATM_MAX_TRADE)
+            lines.append(f"• {'⭐ ' if x['good'] else ''}<b>{s}</b> רצפה ${fmt_price(x['floor'])} ↔ תקרה "
+                         f"${fmt_price(x['ceiling'])} · עכשיו ${fmt_price(x['last'])} · עד ${cap:,.0f}")
         lines.append("הסוכן יקנה ברצפה וימכור בתקרה, אם אין סימני דילול.")
+        if any(x["good"] for x in found.values()):
+            lines.append("⭐ = כספומט טוב (הדפוס חזר הרבה פעמים, בלי סימני דילול) – תקציב מוגדל.")
         run.notify("\n".join(lines))
 
 
@@ -121,7 +138,8 @@ def _filled(bars, level, shares, side):
 def _budget(st, rng):
     pt, a = _book(st)
     room = trader.equity(pt) * config.ATM_BUDGET_PCT - invested(st)
-    return max(0.0, min(config.ATM_MAX_TRADE, rng["max"], room, pt["cash"] - config.TRADE_FEE))
+    cap = config.ATM_GOOD_MAX_TRADE if rng.get("good") else config.ATM_MAX_TRADE
+    return max(0.0, min(cap, rng["max"], room, pt["cash"] - config.TRADE_FEE))
 
 
 def _buy(run, sym, rng, price, shares, add=False):
@@ -142,9 +160,9 @@ def _buy(run, sym, rng, price, shares, add=False):
         return
     a["pos"][sym] = {"kind": "atm", "shares": shares, "shares0": shares, "entry": price, "floor": rng["floor"],
                      "ceiling": rng["ceiling"], "last": price, "high": price, "basis": cost + config.TRADE_FEE,
-                     "opened": time.time(), "break_days": [], "added": False, "trail": None}
+                     "opened": time.time(), "break_days": [], "added": False, "trail": None, "good": bool(rng.get("good"))}
     gain = shares * (rng["ceiling"] - price) - 2 * config.TRADE_FEE
-    run.notify(f"🏧 <b>כספומט – קנייה וירטואלית: {sym}</b>\n"
+    run.notify(f"🏧 <b>כספומט{' טוב ⭐' if rng.get('good') else ''} – קנייה וירטואלית: {sym}</b>\n"
                f"{shares:,} מניות × ${fmt_price(price)} = ${cost:,.0f} (ברצפה)\n"
                f"פקודת מכירה מחכה בתקרה ${fmt_price(rng['ceiling'])} → רווח אפשרי ${gain:,.0f} "
                f"(+{(rng['ceiling'] / price - 1) * 100:.0f}%) אחרי עמלות\n"
@@ -224,7 +242,8 @@ def _manage(run, sym, p, now):
         burst = bool(normal) and sum(b["v"] for b in bars[-15:]) >= 5 * normal
         if not p["added"] and burst and config.ATM_ADD_ON:
             add_px = trader._grid(last, last, False)
-            shares = int(min(p["shares0"] * add_px, _budget(st, {"max": config.ATM_MAX_TRADE})) / add_px) if add_px else 0
+            room = _budget(st, {"max": config.ATM_GOOD_MAX_TRADE, "good": p.get("good")})
+            shares = int(min(p["shares0"] * add_px, room) / add_px) if add_px else 0
             if shares * add_px >= config.TRADE_MIN_DOLLARS / 3:
                 _buy(run, sym, None, add_px, shares, add=True)
         trader._note(run, sym, "atmbreak", f"🏧 <b>{sym}</b> ירדה מתחת לרצפה ${fmt_price(floor)} – אין סימני דילול "
@@ -265,8 +284,8 @@ def _entries(run, now):
         shares = int(budget / rng["floor"])
         if shares * rng["floor"] < config.ATM_MIN_TRADE:
             continue
-        if shares * (rng["ceiling"] - rng["floor"]) - 2 * config.TRADE_FEE <= 0:
-            continue
+        if shares * (rng["ceiling"] - rng["floor"]) - 2 * config.TRADE_FEE < config.ATM_MIN_GAIN:
+            continue                                  # not worth it after the fees
         if not _filled(bars, rng["floor"], shares, "buy"):
             continue
         _buy(run, sym, rng, rng["floor"], shares)

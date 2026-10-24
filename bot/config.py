@@ -94,10 +94,19 @@ TRADE_EQ_EVERY_MIN = 15       # portfolio value history for the trading screen
 
 # --- "ATM stocks" strategy (bot/atm_trader.py, virtual money; off in live mode for now) ---
 ATM_ON = True
-ATM_BUDGET_PCT = 0.20         # at most 20% of the portfolio in ATM stocks
+ATM_BUDGET_PCT = 0.40         # at most 40% of the portfolio in ATM stocks (20% left no room for bigger good-ATM buys)
 ATM_MAX_POS = 5
 ATM_MAX_TRADE = 500.0
 ATM_MIN_TRADE = 25.0
+ATM_MIN_GAIN = 20.0           # skip a round whose profit at the ceiling after both fees is under $20
+# A "good ATM" (his request 24.10): the pattern repeated many times and no dilution signs -> a bigger buy.
+# Backtest 24.10 (177 sub-penny tickers, 1y): 4+ swings & 5+ touches won 142/152 rounds vs ~half for the rest;
+# the size limit that matters is the share of daily volume (2% kept buys ~$120), so good ATMs get 5% of it.
+ATM_GOOD_SWINGS = 4
+ATM_GOOD_TOUCHES = 5          # floor AND ceiling touches
+ATM_GOOD_MAX_CHG6 = 0.05      # with share-count data: under 5% more shares in 6 months
+ATM_GOOD_VOL_SHARE = 0.05     # vs TRADE_MAX_VOL_SHARE (2%) for the rest
+ATM_GOOD_MAX_TRADE = 1500.0
 ATM_QUEUE_X = 3               # sub-penny queue: filled after 3x our size traded at our price (or it went through)
 ATM_NEWS_TRAIL = 0.25         # fresh news at the ceiling: no sale there, trailing stop 25% under the high
 ATM_ADD_ON = True             # one seller dumped under the floor (no dilution): buy once more, cheaper
