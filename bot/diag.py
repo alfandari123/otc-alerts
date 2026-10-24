@@ -134,7 +134,7 @@ def movetest(limit=80, max_price=0.05, days=30):
                     "r3": ret(3), "r5": ret(5), "up3": max(b[2] or 0 for b in after[:3]) / ref - 1,
                     "title": it["title"][:70], "ref": ref})
         print(f"{sym:6} {out[-1]['move']:8} s{out[-1]['score']} ref {fmt_price(ref)}  1d {ret(1):+.0%}  3d {ret(3):+.0%}"
-              f"  5d {ret(5):+.0%}  max3 {out[-1]['up3']:+.0%}  | {out[-1]['title']}")
+              f"  5d {ret(5):+.0%}  max3 {out[-1]['up3']:+.0%}  | {out[-1]['title']}", flush=True)
         if len(out) >= limit:
             break
         time.sleep(1)
