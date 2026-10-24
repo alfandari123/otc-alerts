@@ -91,7 +91,7 @@ def ai_item():
           "| error:", ai.last_error)
 
 
-def movetest(limit=80, max_price=0.05, days=30):
+def movetest(limit=80, days=30, max_price=0.05):
     """Course news taxonomy check: the AI labels recent OTC Markets news pump / pop_drop / sell / none, then we look
     at what the price really did 1, 3 and 5 trading days later (Yahoo daily bars)."""
     import statistics
@@ -132,9 +132,10 @@ def movetest(limit=80, max_price=0.05, days=30):
         ret = lambda k: after[k - 1][1] / ref - 1
         out.append({"sym": sym, "move": res.get("move") or "?", "score": res.get("score"), "r1": ret(1),
                     "r3": ret(3), "r5": ret(5), "up3": max(b[2] or 0 for b in after[:3]) / ref - 1,
+                    "late": after[4][1] / after[0][1] - 1,  # bought at the news day's close, held 4 more days
                     "title": it["title"][:70], "ref": ref})
         print(f"{sym:6} {out[-1]['move']:8} s{out[-1]['score']} ref {fmt_price(ref)}  1d {ret(1):+.0%}  3d {ret(3):+.0%}"
-              f"  5d {ret(5):+.0%}  max3 {out[-1]['up3']:+.0%}  | {out[-1]['title']}", flush=True)
+              f"  5d {ret(5):+.0%}  max3 {out[-1]['up3']:+.0%}  late {out[-1]['late']:+.0%}  | {out[-1]['title']}", flush=True)
         if len(out) >= limit:
             break
         time.sleep(1)
@@ -144,7 +145,7 @@ def movetest(limit=80, max_price=0.05, days=30):
         if g:
             med = lambda k: statistics.median(x[k] for x in g)
             print(f"  {m:8} n={len(g):3}  {med('r1'):+.0%} / {med('r3'):+.0%} / {med('r5'):+.0%}  max3 {med('up3'):+.0%}"
-                  f"  up5 {sum(x['r5'] > 0 for x in g) / len(g):.0%}")
+                  f"  up5 {sum(x['r5'] > 0 for x in g) / len(g):.0%}  late {med('late'):+.0%}")
     print("model:", ai._model, "| error:", ai.last_error)
 
 
@@ -234,7 +235,8 @@ def main():
     if "ins" in sys.argv:
         return ins()
     if "movetest" in sys.argv:
-        return movetest()
+        nums = [int(a) for a in sys.argv if a.isdigit()]  # optional: movetest <limit> <days>
+        return movetest(*nums[:2])
     if "prn" in sys.argv:
         return prn()
     if "dil" in sys.argv:
