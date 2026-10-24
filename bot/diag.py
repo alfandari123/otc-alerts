@@ -91,7 +91,7 @@ def ai_item():
           "| error:", ai.last_error)
 
 
-def movetest(limit=60):
+def movetest(limit=80, max_price=0.05, days=30):
     """Course news taxonomy check: the AI labels recent OTC Markets news pump / pop_drop / sell / none, then we look
     at what the price really did 1, 3 and 5 trading days later (Yahoo daily bars)."""
     import statistics
@@ -100,19 +100,19 @@ def movetest(limit=60):
     from .util import fmt_price
     now = time.time()
     rows = []
-    for page in range(1, 8):
+    for page in range(1, 25):
         recs = otcm._get("/news-otcapi/news", page=page, pageSize=100, sortOn="releaseDate", sortDir="DESC").json()
         recs = recs.get("records") or []
         rows += recs
-        if not recs or otcm._ts(recs[-1].get("releaseDate")) < now - 16 * 86400:
+        if not recs or otcm._ts(recs[-1].get("releaseDate")) < now - days * 86400:
             break
     seen, out = set(), []
     for r in rows:
         sym, ts = (r.get("symbol") or "").upper(), otcm._ts(r.get("releaseDate"))
-        if not sym or sym in seen or not (now - 16 * 86400 < ts < now - 4 * 86400):
+        if not sym or sym in seen or not (now - days * 86400 < ts < now - 4 * 86400):
             continue
         try:
-            q = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1mo",
+            q = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=3mo",
                              headers={"User-Agent": config.BROWSER_UA}, timeout=20).json()["chart"]["result"][0]
             t, c, h = q["timestamp"], q["indicators"]["quote"][0]["close"], q["indicators"]["quote"][0]["high"]
         except Exception:
@@ -120,7 +120,7 @@ def movetest(limit=60):
         bars = [(t[i], c[i], h[i]) for i in range(len(t)) if c[i] is not None]
         before = [b for b in bars if b[0] < ts - 6 * 3600]
         after = [b for b in bars if b[0] >= ts - 6 * 3600]
-        if not before or len(after) < 5 or not 0 < before[-1][1] <= config.MAX_PRICE:
+        if not before or len(after) < 5 or not 0 < before[-1][1] <= max_price:
             continue
         seen.add(sym)
         it = {"id": r["id"], "src": "OTCM", "src_label": "OTC Markets news", "news_id": r["id"], "syms": [sym],

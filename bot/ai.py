@@ -154,6 +154,7 @@ def _parse(r):
             "summary_he": str(d.get("summary_he", ""))[:700],
             "risk_he": str(d.get("risk_he", ""))[:300],
             "ticker": re.sub(r"[^A-Z]", "", str(d.get("ticker", "")).upper())[:6],
+            "move": d.get("move") if d.get("move") in ("pump", "pop_drop", "sell", "none") else "none",
         }
     except (KeyError, IndexError, ValueError, TypeError):
         return None
