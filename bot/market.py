@@ -69,6 +69,15 @@ def avg_volume(sym, today, cache):
     return avg
 
 
+def low20(sym, before_ts):
+    """Lowest daily close of the last 20 sessions before a moment (the news), or None."""
+    c = chart(sym)
+    if not c or not c["ts"] or len(c["ts"]) != len(c["close"]):
+        return None
+    closes = [x for t, x in zip(c["ts"], c["close"]) if x and t < before_ts - 6 * 3600][-20:]
+    return min(closes) if len(closes) >= 10 else None
+
+
 def volume_spike(sym, today):
     c = chart(sym)
     if not c or not c["ts"] or len(c["ts"]) != len(c["vol"]):

@@ -68,6 +68,8 @@ TRADE_L2_NEAR = 0.15          # buyers within 15% under the stop count as "near 
 MM_DILUTERS = {"MAXM", "GLED", "CFGN", "PAUL", "JANE", "BBAR", "BLAS", "ALPS", "STXG", "AEXG"}
 TRADE_L2_DILUTER_LEVELS = 3   # sellers' price levels checked for a known diluter
 TRADE_MAX_CHASE = 0.60        # do not buy after the stock already rose 60%+ from the pre-news price
+TRADE_MAX_OFF_LOW = 2.0       # ... nor when the pre-news price is already 2x its 20-day low (course: no buy after
+                              # +100% off the bottom; data 25.10: such news days fell ~20% in the next 4 days)
 TRADE_DUMP_FROM_HIGH = 0.30   # do not buy when the price already fell 30% from the day's high
 TRADE_CONFIRM_BARS = 5        # price must be higher than 5 trading minutes ago
 TRADE_VOL_CONFIRM_X = 1.0     # today's volume must already reach the 20-day average

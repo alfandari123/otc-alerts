@@ -422,6 +422,12 @@ def _buy(run, sym, c):
     if not plan:
         c["why"] = why
         return False
+    low = market.low20(sym, c["ts"])
+    if low and plan["ref"] >= config.TRADE_MAX_OFF_LOW * low:
+        c["why"] = (f"כבר עלתה פי {plan['ref'] / low:.1f} מהשפל של 20 הימים שלפני החדשה – "
+                    "לא קונים אחרי +100% מהתחתית")
+        c["drop"] = True
+        return False
     avg = market.avg_volume(sym, now.date(), st["avgvol"])
     vol = sum(b["v"] for b in bars)
     if avg and vol < config.TRADE_VOL_CONFIRM_X * avg:
