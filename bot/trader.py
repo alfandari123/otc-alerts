@@ -163,6 +163,32 @@ def book_wall(bk, low, high, our_shares):
     return ""
 
 
+def diluter_ask(bk):
+    """(market maker, price, first) of the first known diluter among the nearest sellers, or None.
+    Course rule: a diluter first on the ask = active dilution."""
+    if not bk or not bk["asks"]:
+        return None
+    asks = sorted((x for x in bk["asks"] if x["price"]), key=lambda x: x["price"])
+    for i, x in enumerate(asks[:config.TRADE_L2_DILUTER_LEVELS]):
+        for m in x["mm"]:
+            if (m.get("id") or "").upper() in config.MM_DILUTERS:
+                return m["id"].upper(), x["price"], i == 0
+    return None
+
+
+def diluter_text(d):
+    return f"{d[0]} (עושה שוק שמדלל בדרך כלל) {'ראשון' if d[2] else 'יושב'} בצד המוכרים ב-${fmt_price(d[1])}"
+
+
+def any_diluter(bk):
+    """A known diluter anywhere in the visible Level 2 (course ATM checklist: then skip the stock), or ''."""
+    for x in (bk or {}).get("bids", []) + (bk or {}).get("asks", []):
+        for m in x["mm"]:
+            if (m.get("id") or "").upper() in config.MM_DILUTERS:
+                return m["id"].upper()
+    return ""
+
+
 def sell_price(sym, last):
     """Price we can sell at right now: the real bid, or one tick under the last trade."""
     q = quote(sym)
@@ -410,6 +436,12 @@ def _buy(run, sym, c):
     budget = min(budget, vol * config.TRADE_MAX_VOL_SHARE * entry)   # we must be able to get out
     shares = int(budget / entry)
     bk = book(sym)
+    dil_mm = diluter_ask(bk)
+    if dil_mm and dil_mm[2]:
+        c["why"] = "Level 2: " + diluter_text(dil_mm) + " – דילול פעיל"
+        return False
+    if dil_mm:                # a diluter further up the asks: dilution exists, not active right now -> half size
+        shares //= 2
     if bk and bk["bids"]:     # Level 2: buy no more than the buyers standing near the bid can take back from us
         depth = sum(x["size"] for x in bk["bids"][:config.TRADE_L2_LEVELS])
         shares = min(shares, int(depth * config.TRADE_L2_BID_SHARE))
@@ -684,6 +716,9 @@ def _heavy_selling(run, sym, p, bars, sell):
     wall2 = book_wall(book(sym), last, last * 1.5, p["shares"])
     if wall2:
         reasons.append(f"Level 2: קיר מוכרים – {wall2}")
+    dil_mm = diluter_ask(book(sym))
+    if dil_mm and dil_mm[2]:
+        reasons.append("Level 2: " + diluter_text(dil_mm))
     if last < p["ref"]:
         reasons.append("המחיר ירד מתחת למחיר שלפני החדשה – החדשה 'נמחקה'")
     if reasons:

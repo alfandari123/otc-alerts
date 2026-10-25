@@ -288,6 +288,8 @@ def _entries(run, now):
             continue                                  # not worth it after the fees
         if not _filled(bars, rng["floor"], shares, "buy"):
             continue
+        if trader.any_diluter(trader.book(sym)):
+            continue                                  # course ATM checklist: a known diluter in Level 2 -> skip
         _buy(run, sym, rng, rng["floor"], shares)
 
 

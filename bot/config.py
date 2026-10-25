@@ -63,6 +63,10 @@ TRADE_L2_WALL_VS_US = 3       # ... and 3x our own position, before the target -
 TRADE_L2_HOLE = 0.25          # a gap of 25%+ between two buyer levels = a hole (BDPT: 0.0040 -> 0.0023)
 TRADE_L2_RISK_X = 1.3         # the stop would really fill 30%+ worse than planned -> buy less / skip
 TRADE_L2_NEAR = 0.15          # buyers within 15% under the stop count as "near the stop"
+# Market makers that usually dilute (course table "טבלת עושי שוק", Sean Toizer): first on the sellers' side =
+# active dilution -> no buy; further up the asks = dilution exists but is not active now -> half size.
+MM_DILUTERS = {"MAXM", "GLED", "CFGN", "PAUL", "JANE", "BBAR", "BLAS", "ALPS", "STXG", "AEXG"}
+TRADE_L2_DILUTER_LEVELS = 3   # sellers' price levels checked for a known diluter
 TRADE_MAX_CHASE = 0.60        # do not buy after the stock already rose 60%+ from the pre-news price
 TRADE_DUMP_FROM_HIGH = 0.30   # do not buy when the price already fell 30% from the day's high
 TRADE_CONFIRM_BARS = 5        # price must be higher than 5 trading minutes ago

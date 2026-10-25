@@ -29,6 +29,10 @@ SEC_FORMS = {
     "SCHEDULE 13D": (+1, 2, "משקיע צבר מעל 5% מהמניות"),
     "PRE 14C": (0, 2, "הודעה לבעלי המניות (שם / ספליט / מניות מורשות)"),
     "DEF 14C": (0, 2, "הודעה לבעלי המניות (שם / ספליט / מניות מורשות)"),
+    # proxy for a shareholder vote - in OTC usually a reverse split or more authorized shares (course: open it at
+    # once and look for "reverse", "split", "increase", "bankruptcy")
+    "PRE 14A": (0, 2, "זימון לאסיפת בעלי מניות (הצבעה: ספליט / מניות מורשות / מיזוג)"),
+    "DEF 14A": (0, 2, "זימון לאסיפת בעלי מניות (הצבעה: ספליט / מניות מורשות / מיזוג)"),
     "10-12G": (+1, 2, "רישום מלא ב-SEC (הופכת לחברה מדווחת)"),
     "1-A-W": (+1, 2, "ביטול הנפקת Reg A"),
     "1-A": (-1, 2, "הנפקת Reg A (דילול)"),

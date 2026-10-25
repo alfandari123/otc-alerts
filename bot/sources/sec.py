@@ -9,7 +9,7 @@ from ..util import html_to_text
 
 FEED = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={}&count=100&start={}&output=atom"
 TICKERS = "https://www.sec.gov/files/company_tickers_exchange.json"
-FORMS = ["8-K", "SCHEDULE 13D", "SC 14F1", "PRE 14C", "DEF 14C", "10-12G",
+FORMS = ["8-K", "SCHEDULE 13D", "SC 14F1", "PRE 14C", "DEF 14C", "PRE 14A", "DEF 14A", "10-12G",
          "S-1", "1-A", "RW", "15-12G", "15-15D"]
 MAX_PAGES = {"8-K": 4}
 SLOW_FORMS_EVERY_SEC = 300
