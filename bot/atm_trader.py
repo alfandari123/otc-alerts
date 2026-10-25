@@ -109,7 +109,7 @@ def scan(run, force=False):
             cap = min(x["max"], config.ATM_GOOD_MAX_TRADE if x["good"] else config.ATM_MAX_TRADE)
             lines.append(f"• {'⭐ ' if x['good'] else ''}<b>{s}</b> רצפה ${fmt_price(x['floor'])} ↔ תקרה "
                          f"${fmt_price(x['ceiling'])} · עכשיו ${fmt_price(x['last'])} · עד ${cap:,.0f}")
-        lines.append("הסוכן יקנה ברצפה וימכור בתקרה, אם אין סימני דילול.")
+        lines.append("הסוכן יקנה ברצפה וימכור צעד אחד מתחת לתקרה (ראשון בתור המוכרים), אם אין סימני דילול.")
         if any(x["good"] for x in found.values()):
             lines.append("⭐ = כספומט טוב (הדפוס חזר הרבה פעמים, בלי סימני דילול) – תקציב מוגדל.")
         run.notify("\n".join(lines))
@@ -135,6 +135,20 @@ def _filled(bars, level, shares, side):
 
 # ---------- trading ----------
 
+def sell_level(floor, ceiling):
+    """Where the sell order waits: ATM_SELL_UNDER_TICKS under the ceiling - the first seller in line gets out sooner
+    and more rounds fit in a month (course 28d-44; 1y backtest 25.10: P&L +20%, wins 92% vs 82%, 6 vs 15 days).
+    Back to the ceiling itself when that would not be above the floor."""
+    lvl = ceiling
+    for _ in range(config.ATM_SELL_UNDER_TICKS):
+        lvl = round(lvl - atm.tick(lvl), 6)
+    return lvl if lvl > floor + 1e-9 else ceiling
+
+
+def _sell_px(p):
+    return p.get("sell") or sell_level(p["floor"], p["ceiling"])
+
+
 def _budget(st, rng):
     pt, a = _book(st)
     room = trader.equity(pt) * config.ATM_BUDGET_PCT - invested(st)
@@ -156,16 +170,19 @@ def _buy(run, sym, rng, price, shares, add=False):
         p["added"] = True
         run.notify(f"🏧 <b>כספומט – קנייה נוספת: {sym}</b>\n"
                    f"מוכר זרק מתחת לרצפה בלי סימני דילול – קונה עוד {shares:,} ב-${fmt_price(price)} (${cost:,.0f})\n"
-                   f"ממוצע חדש ${fmt_price(p['entry'])} · מוכר בתקרה ${fmt_price(p['ceiling'])}")
+                   f"ממוצע חדש ${fmt_price(p['entry'])} · מוכר ב-${fmt_price(_sell_px(p))}")
         return
     a["pos"][sym] = {"kind": "atm", "shares": shares, "shares0": shares, "entry": price, "floor": rng["floor"],
-                     "ceiling": rng["ceiling"], "last": price, "high": price, "basis": cost + config.TRADE_FEE,
+                     "ceiling": rng["ceiling"], "sell": sell_level(rng["floor"], rng["ceiling"]), "last": price,
+                     "high": price, "basis": cost + config.TRADE_FEE,
                      "opened": time.time(), "break_days": [], "added": False, "trail": None, "good": bool(rng.get("good"))}
-    gain = shares * (rng["ceiling"] - price) - 2 * config.TRADE_FEE
+    sell = a["pos"][sym]["sell"]
+    gain = shares * (sell - price) - 2 * config.TRADE_FEE
     run.notify(f"🏧 <b>כספומט{' טוב ⭐' if rng.get('good') else ''} – קנייה וירטואלית: {sym}</b>\n"
                f"{shares:,} מניות × ${fmt_price(price)} = ${cost:,.0f} (ברצפה)\n"
-               f"פקודת מכירה מחכה בתקרה ${fmt_price(rng['ceiling'])} → רווח אפשרי ${gain:,.0f} "
-               f"(+{(rng['ceiling'] / price - 1) * 100:.0f}%) אחרי עמלות\n"
+               f"פקודת מכירה מחכה ב-${fmt_price(sell)}"
+               + (f" (צעד אחד מתחת לתקרה ${fmt_price(rng['ceiling'])} – ראשונים בתור)" if sell < rng["ceiling"] else " (בתקרה)")
+               + f" → רווח אפשרי ${gain:,.0f} (+{(sell / price - 1) * 100:.0f}%) אחרי עמלות\n"
                "אין עצירה לפי מחיר: אם הרצפה נשברת – בודק אם זה דילול (יוצא מיד) או מוכר אחד (מחזיק/קונה עוד).")
     log("atm: bought")
 
@@ -226,13 +243,13 @@ def _manage(run, sym, p, now):
         p["trail"] = max(p["trail"], trader._grid(p["high"] * (1 - config.ATM_NEWS_TRAIL), p["high"], False))
         if last <= p["trail"]:
             return _sell(run, sym, last - t if last > t else last, "חדשה הריצה את המניה מעל התקרה – העצירה הנגררת נפגעה, הרווח נשמר")
-    elif mine and _filled(mine, p["ceiling"], p["shares"], "sell"):
+    elif mine and _filled(mine, _sell_px(p), p["shares"], "sell"):
         if fresh_news:
             p["trail"] = trader._grid(max(p["ceiling"] - t, p["high"] * (1 - config.ATM_NEWS_TRAIL)), p["ceiling"], False)
             trader._note(run, sym, "atmnews", f"🏧 <b>{sym}</b> הגיעה לתקרה, אבל יש חדשה חיובית טרייה – לא מוכר בתקרה; "
                                               f"עצירה נגררת ב-${fmt_price(p['trail'])}")
         else:
-            return _sell(run, sym, p["ceiling"], "🎯 הגיעה לתקרה – מכירה בהתנגדות")
+            return _sell(run, sym, _sell_px(p), "🎯 הגיעה לתקרה – מכירה בהתנגדות")
     # 3) the floor broke: why?
     floor = p["floor"]
     day = str(now.date())
@@ -284,7 +301,7 @@ def _entries(run, now):
         shares = int(budget / rng["floor"])
         if shares * rng["floor"] < config.ATM_MIN_TRADE:
             continue
-        if shares * (rng["ceiling"] - rng["floor"]) - 2 * config.TRADE_FEE < config.ATM_MIN_GAIN:
+        if shares * (sell_level(rng["floor"], rng["ceiling"]) - rng["floor"]) - 2 * config.TRADE_FEE < config.ATM_MIN_GAIN:
             continue                                  # not worth it after the fees
         if not _filled(bars, rng["floor"], shares, "buy"):
             continue
@@ -318,7 +335,7 @@ def cycle(run):
 def dashboard_rows(st):
     _, a = _book(st)
     pos = [{"sym": s, "kind": "atm", "shares": p["shares"], "shares0": p["shares0"], "entry": p["entry"],
-            "last": p.get("last"), "stop": p["floor"], "target": p["ceiling"], "high": p["high"],
+            "last": p.get("last"), "stop": p["floor"], "target": _sell_px(p), "high": p["high"],
             "opened": p["opened"], "cat": "🏧 כספומט", "score": 0, "runner": bool(p["trail"]), "be": False,
             "ref": p["floor"], "basis": round(p["basis"], 2), "title": "", "url": "", "bars": trader.chart_bars(s)}
            for s, p in a["pos"].items()]

@@ -114,6 +114,7 @@ ATM_GOOD_MAX_CHG6 = 0.05      # with share-count data: under 5% more shares in 6
 ATM_GOOD_VOL_SHARE = 0.05     # vs TRADE_MAX_VOL_SHARE (2%) for the rest
 ATM_GOOD_MAX_TRADE = 1500.0
 ATM_QUEUE_X = 3               # sub-penny queue: filled after 3x our size traded at our price (or it went through)
+ATM_SELL_UNDER_TICKS = 1      # the sell waits 1 tick under the ceiling (course; 1y backtest: +20% P&L, 6 vs 15 days)
 ATM_NEWS_TRAIL = 0.25         # fresh news at the ceiling: no sale there, trailing stop 25% under the high
 ATM_ADD_ON = True             # one seller dumped under the floor (no dilution): buy once more, cheaper
 ATM_HEAVY_X = 2               # a day closing under the floor on 2x volume counts as a break day; 2 in a row = out
