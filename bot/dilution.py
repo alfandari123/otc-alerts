@@ -37,9 +37,13 @@ def _json(path, **params):
 
 def resolve_id(sym):
     """OTC Markets security id (works from a home computer, not from GitHub's servers)."""
-    secs = _json(f"/otcapi/company/profile/full/{sym}").get("securities") or []
-    sec_ = next((s for s in secs if (s.get("symbol") or "").upper() == sym), secs[0] if secs else None)
-    return sec_.get("id") if sec_ else None
+    try:
+        secs = _json(f"/otcapi/company/profile/full/{sym}").get("securities") or []
+        sec_ = next((s for s in secs if (s.get("symbol") or "").upper() == sym), secs[0] if secs else None)
+        return sec_.get("id") if sec_ else None
+    except Exception:
+        # the quote endpoint carries the same id (AITX 421855 from both, 29.10) and is blocked at other moments
+        return otcm._get(f"/otcapi/stock/trade/inside/{sym}", symbol=sym).json().get("securityId")
 
 
 def _from_otc(sid):
