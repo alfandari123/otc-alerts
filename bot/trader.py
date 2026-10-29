@@ -1,6 +1,7 @@
 """Paper-trading agent (virtual money only).
 
-Buys an OTC stock after strong positive news when the price starts to move with volume, only if the
+Buys an OTC stock after strong positive news (or a call in the Elevate Trading group, bot/group.py: same rules,
+virtual money only) when the price starts to move with volume, only if the
 possible gain is at least 3x the possible loss - after the spread AND the broker fees. Stays away from active
 diluters. Once the gain equals the risk, the stop moves to the entry price (no loss), then trails the high.
 At the target it sells 2/3 and keeps 1/3 as a "bonus" when there is no dilution danger and the move is strong.
@@ -250,6 +251,28 @@ def on_news(st, sym, score, cat, it, price):
     log("trader: new candidate")
 
 
+def on_group(st, sym, cat, ts):
+    """A call in the Elevate Trading group: the stock becomes a candidate, checked by the same rules as a news buy.
+    Virtual money only; group positions are capped so they cannot take the news strategy's places.
+    Returns a Hebrew line for the group alert ('' when the agent does not trade group calls)."""
+    if not (config.TRADE_ON and config.GROUP_TRADE_ON) or live():
+        return ""
+    pt = init(st)
+    if sym in pt["pos"] or sym in (pt.get("atm") or {}).get("pos", {}):
+        return "📌 המניה כבר בתיק הווירטואלי של הסוכן"
+    if sym in pt["cands"]:
+        return "🤖 המניה כבר במעקב לקנייה אצל הסוכן"
+    pt["cands"][sym] = {"ts": ts, "score": 0, "src": "group", "cat": cat, "price": None, "ref": None,
+                        "deadline": None, "why": "", "title": "", "url": "", "company": ""}
+    log("trader: new group candidate")
+    return ("🤖 הסוכן בודק אם לקנות (כסף וירטואלי) – באותם כללים של קנייה אחרי חדשה, "
+            "עד שעתיים מהקריאה (או מפתיחת המסחר)")
+
+
+def _before(c):
+    return "הקריאה בקבוצה" if c.get("src") == "group" else "החדשה"
+
+
 def on_deal(st, syms, facts):
     """A merger / share exchange paid with RESTRICTED shares to the new owners (Rule 144): that is not market
     dilution, so it does not block a buy the way a convertible note or an offering does."""
@@ -385,9 +408,9 @@ def _plan(c, bars, prev):
     return {"entry": entry, "stop": stop, "risk": risk, "ref": ref}, ""
 
 
-def _size_pct(score, price):
+def _size_pct(score, price, group=False):
     """How much of the portfolio this setup deserves: stronger news = bigger; trips (0.000X) = smaller."""
-    pct = config.TRADE_SIZE_BY_SCORE.get(min(score, 10), config.TRADE_POSITION_PCT)
+    pct = config.GROUP_TRADE_PCT if group else config.TRADE_SIZE_BY_SCORE.get(min(score, 10), config.TRADE_POSITION_PCT)
     if price < 0.001:
         pct *= config.TRADE_TRIPS_FACTOR
     return min(pct, config.TRADE_MAX_POSITION_PCT)
@@ -416,6 +439,13 @@ def _buy(run, sym, c):
     if pt["paused"]:
         c["why"] = "הסוכן בהשהיה (/go כדי להמשיך)"
         return False
+    if c.get("src") == "group":
+        if live():
+            c["why"], c["drop"] = "קניות לפי הקבוצה רק בכסף וירטואלי", True
+            return False
+        if sum(p.get("src") == "group" for p in pt["pos"].values()) >= config.GROUP_TRADE_MAX_POS:
+            c["why"] = f"כבר יש {config.GROUP_TRADE_MAX_POS} מניות מהקבוצה בתיק"
+            return False
     c["q"] = quote(sym)
     plan, why = _plan(c, bars, prev)
     c.pop("q", None)
@@ -424,7 +454,7 @@ def _buy(run, sym, c):
         return False
     low = market.low20(sym, c["ts"])
     if low and plan["ref"] >= config.TRADE_MAX_OFF_LOW * low:
-        c["why"] = (f"כבר עלתה פי {plan['ref'] / low:.1f} מהשפל של 20 הימים שלפני החדשה – "
+        c["why"] = (f"כבר עלתה פי {plan['ref'] / low:.1f} מהשפל של 20 הימים שלפני {_before(c)} – "
                     "לא קונים אחרי +100% מהתחתית")
         c["drop"] = True
         return False
@@ -437,7 +467,7 @@ def _buy(run, sym, c):
         c["why"] = "כבר יש מקסימום מניות פתוחות"
         return False
     entry, risk = plan["entry"], plan["risk"]
-    pct = _size_pct(c["score"], entry)
+    pct = _size_pct(c["score"], entry, c.get("src") == "group")
     budget = min(equity(pt) * pct, pt["cash"] - config.TRADE_FEE)
     budget = min(budget, vol * config.TRADE_MAX_VOL_SHARE * entry)   # we must be able to get out
     shares = int(budget / entry)
@@ -478,7 +508,7 @@ def _buy(run, sym, c):
         return False
     info = {"stop": plan["stop"], "target": target, "R": risk, "ref": plan["ref"], "cat": c["cat"],
             "score": c["score"], "title": c.get("title", ""), "url": c.get("url", ""), "company": c.get("company", ""),
-            "last": bars[-1]["c"], "last_t": bars[-1]["t"]}
+            "last": bars[-1]["c"], "last_t": bars[-1]["t"], "src": c.get("src", "news")}
     if live():
         return _live_buy(run, sym, shares, entry, info)
     _open(run, sym, shares, entry, info)
@@ -498,7 +528,7 @@ def _open(run, sym, shares, entry, info):
                       "opened": time.time(), "last_t": info["last_t"], "cat": info["cat"], "score": info["score"],
                       "ref": info["ref"], "basis": cost + config.TRADE_FEE, "tso0": d["tso"] if d else None,
                       "tso_chk": time.time(), "be": False, "runner": False, "title": info["title"],
-                      "url": info["url"], "company": info.get("company", "")}
+                      "url": info["url"], "company": info.get("company", ""), "src": info.get("src", "news")}
     c = info
     plan = {"stop": info["stop"], "ref": info["ref"]}
     gain = (target / entry - 1) * 100
@@ -506,12 +536,12 @@ def _open(run, sym, shares, entry, info):
     net_gain = shares * (target - entry) - 2 * config.TRADE_FEE
     net_loss = shares * risk + 2 * config.TRADE_FEE
     run.notify(f"🛒 <b>קנייה {_word()}: {sym}</b> ({price_class(entry)})\n"
-               f"{esc(c['cat'])} · ציון {c['score']}/10\n"
+               f"{esc(c['cat'])}" + (f" · ציון {c['score']}/10" if c["score"] else "") + "\n"
                f"{shares:,} מניות × ${fmt_price(entry)} = ${cost:,.0f} ({cost / equity(pt) * 100:.0f}% מהתיק)\n"
                f"🎯 יעד: ${fmt_price(target)} (+{gain:.0f}%) · 🛑 עצירה: ${fmt_price(plan['stop'])} (−{loss:.0f}%)\n"
                f"אחרי עמלות: רווח אפשרי ${net_gain:,.0f} מול הפסד אפשרי ${net_loss:,.0f} "
                f"(1:{net_gain / net_loss:.1f})\n"
-               f"מחיר לפני החדשה: ${fmt_price(plan['ref'])}\n"
+               f"מחיר לפני {_before(info)}: ${fmt_price(plan['ref'])}\n"
                + "".join(x + "\n" for x in insiders.lines(st.get("ins", {}).get(sym, [0, None])[1]))
                +
                f"ברווח של +{loss:.0f}% העצירה עולה למחיר הקנייה (בלי הפסד). ביעד: מוכר 2/3, ו-1/3 נשאר כבונוס "
@@ -568,7 +598,7 @@ def _book(run, sym, shares, fill, reason, fee=True):
     r_mult = (fill - p["entry"]) / p["R"] if p["R"] else 0
     pt["closed"].append({"sym": sym, "entry": p["entry"], "exit": fill, "shares": shares, "pnl": round(pnl, 2),
                          "r": round(r_mult, 2), "opened": p["opened"], "closed": time.time(), "why": reason,
-                         "part": not closed})
+                         "part": not closed, "src": p.get("src", "news")})
     pt["closed"] = pt["closed"][-300:]
     if closed:
         pt["pos"].pop(sym)
@@ -726,7 +756,7 @@ def _heavy_selling(run, sym, p, bars, sell):
     if dil_mm and dil_mm[2]:
         reasons.append("Level 2: " + diluter_text(dil_mm))
     if last < p["ref"]:
-        reasons.append("המחיר ירד מתחת למחיר שלפני החדשה – החדשה 'נמחקה'")
+        reasons.append(f"המחיר ירד מתחת למחיר שלפני {_before(p)} – {_before(p).split()[0]} 'נמחקה'")
     if reasons:
         _sell(run, sym, p["shares"], sell, "🔴 מכירה כבדה – נורה אדומה: " + "; ".join(reasons))
         return True
@@ -871,6 +901,9 @@ def portfolio_text(st):
         lines.append("🏧 במעקב: " + " · ".join(f"{s} {fmt_price(x['floor'])}↔{fmt_price(x['ceiling'])}"
                                                 for s, x in a["ranges"].items()))
     lines += ["", "<b>מאז ההתחלה:</b>", _stats(pt["closed"])]
+    grp = [x for x in pt["closed"] if x.get("src") == "group"]
+    if grp:
+        lines += ["", "<b>👥 מתוכן – קניות לפי הקבוצה:</b>", _stats(grp)]
     return "\n".join(lines)
 
 
@@ -961,7 +994,7 @@ def _reports(run):
                 ch = (p.get("last", p["entry"]) / p["entry"] - 1) * 100
                 lines.append(f"• {s} {ch:+.0f}% · {_days(p['opened']):.0f} ימים" + (" · בונוס" if p["runner"] else ""))
         if skips:
-            lines.append("\n<b>חדשות שלא נקנו:</b>")
+            lines.append("\n<b>חדשות וקריאות שלא נקנו:</b>")
             lines += [f"• {s} – {esc(w)}" for s, w in skips[:8]]
         if run.notify("\n".join(lines)):
             pt["day_rep"] = day

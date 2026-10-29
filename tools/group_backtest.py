@@ -93,7 +93,7 @@ def main():
                   f"max 3d median {median(m3) * 100:+.0f}% | close 3d median {median(c3) * 100:+.0f}% "
                   f"mean {sum(c3) / len(c3) * 100:+.0f}%\n" if m3 and c3 else f"{label} n={len(rs)} (too new)\n")
 
-    for kind in ("eyes", "entry", "mention"):
+    for kind in ("eyes", "entry", "tweet", "mention"):
         summary(f"KIND {kind}", [r for r in rows if r["kind"] == kind])
     summary("ALL", rows)
     out.write("\nBY USER (eyes+entry):\n")

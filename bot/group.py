@@ -1,9 +1,10 @@
 """Reads the Elevate Trading Telegram group (through Reuven's own account) for stock calls.
 
-A "call" is a message with an OTC ticker and 👀 (watching it) or an entry word (כניסה / סטרטר / הוספה...).
-Each new call is checked with the bot's own engines (price, volume, dilution, bad news, Google News) and sent to
-Reuven; after GROUP_SCORE_DAYS it is scored like tools/group_backtest.py (did +20% come before -15%?) into a
-per-user scoreboard (/group). No buying: the backtest (29.10, 58 days) found no edge in following calls blindly.
+A "call" is a message with an OTC ticker and 👀 (watching it), an entry word (כניסה / סטרטר / הוספה...) or a tweet
+(ציוץ / tweet / an x.com link). Each new call is checked with the bot's own engines (price, volume, dilution, bad news,
+Google News) and sent to Reuven, and the paper agent checks it with its news-buy rules (trader.on_group; his request
+29.10 - the backtest found no edge in following calls blindly, so the rules decide). After GROUP_SCORE_DAYS a call is
+scored like tools/group_backtest.py (did +20% come before -15%?) into a per-user scoreboard (/group).
 Group content is personal data: it lives only in the encrypted state, never in logs (the repo and its logs are public).
 """
 import atexit
@@ -26,6 +27,7 @@ EYES = "\U0001f440"
 ENTRY = re.compile(r"כניסה|נכנסתי|סטרטר|הוספה|הוספתי|חיזקתי|העמסתי|השלמתי|קניתי|בפנים|"
                    r"\b(?:starter|entry|entered|bought|added|loaded)\b", re.I)
 URL = re.compile(r"https?://\S+|\S+\.(?:com|co\.il|io|net)\S*", re.I)
+TWEET = re.compile(r"ציוץ|ציוצים|צייצ|טוויט|\btweet(?:s|ed)?\b|(?:x|twitter)\.com/", re.I)
 DOLLAR = re.compile(r"\$([A-Za-z]{2,5})(?![A-Za-z])")
 WORD = re.compile(r"(?<![A-Za-z$])([A-Za-z]{3,5})(?![A-Za-z])")
 STOP = set("""GLHF GLGL NICE NOICE NICEE NICEEE WEE WEEE WEEEE MORE BID ASK ASKS BIDS LOL LOLL OTC THE AND YOU FOR NOT
@@ -35,13 +37,13 @@ KINGS GOAT FIRE NICE WTF BRO BROS THX THANKS GUYS TODAY OPEN CLOSE HIGH LOW WAIT
 WHAT WHEN WHERE WHO WHY HOW CAN WILL JUST STILL SOON BACK NEXT LAST FIRST NEW OLD BIG HUGE ONE TWO TEN MAX MIN AVG
 VOL VOLUME CHART FILL FILLED SOLD BOUGHT ENTRY STARTER ADDED ANOTHER BEST LOVE HAHA HAHAHA YALLA SHEKEL USD ILS
 SCHWAB IBKR TOS LEVEL TWEETS POST ALERT CALLS CALL PUT PUTS OTCM FINRA DTC DTCC SHELL SPLIT TICKER LOADING""".split())
-KIND_HE = {"eyes": "👀 במעקב", "entry": "🛒 כניסה"}
+KIND_HE = {"eyes": "👀 במעקב", "entry": "🛒 כניסה", "tweet": "🐦 ציוץ"}
 
 _client = None
 
 
 def parse(text):
-    """{"kind": "eyes"|"entry"|"mention", "syms": [...]} or None. Tickers are NOT validated here."""
+    """{"kind": "eyes"|"entry"|"tweet"|"mention", "syms": [...]} or None. Tickers are NOT validated here."""
     if not text:
         return None
     t = URL.sub(" ", text)
@@ -49,14 +51,17 @@ def parse(text):
         kind = "eyes"
     elif ENTRY.search(t):
         kind = "entry"
+    elif TWEET.search(text):            # before the links are removed: an x.com link is a tweet
+        kind = "tweet"
     else:
         kind = "mention"
     words = t.split()
     short = len(words) <= 4
     syms = [m.upper() for m in DOLLAR.findall(t)]
     for m in WORD.findall(t):
-        # all-caps anywhere; Capitalized/lowercase only in a call or a very short message ("Tips👀", "Ugiz")
-        if m.isupper() or kind != "mention" or short:
+        # all-caps anywhere; Capitalized/lowercase only in a call or a very short message ("Tips👀", "Ugiz") -
+        # not in a tweet (its copied English text is full of 3-5 letter words)
+        if m.isupper() or kind in ("eyes", "entry") or short:
             syms.append(m.upper())
     out = []
     for s in syms:
@@ -206,9 +211,11 @@ def on_message(run, g, m):
         n += 1
         call = {"uid": uid, "sym": sym, "kind": sig["kind"], "ts": ts}
         g["calls"].append(call)
-        fresh = time.time() - ts < config.GROUP_ALERT_MAX_AGE_MIN * 60
-        if fresh and not g["off"] and time.time() - g["alerted"].get(sym, 0) >= config.GROUP_REALERT_H * 3600:
-            if run.notify(alert(run.st, g, call, m.message)):
+        if time.time() - ts >= config.GROUP_ALERT_MAX_AGE_MIN * 60:
+            continue                     # an old post (the bot was down): scored only
+        agent = trader.on_group(run.st, sym, f"👥 קריאה בקבוצה – {_name(g, uid)} · {KIND_HE[call['kind']]}", ts)
+        if not g["off"] and time.time() - g["alerted"].get(sym, 0) >= config.GROUP_REALERT_H * 3600:
+            if run.notify(alert(run.st, g, call, m.message, agent)):
                 g["alerted"][sym] = time.time()
     return n
 
@@ -241,7 +248,7 @@ def _day_stats(sym):
     return chg, (vols[-1] if last_today else 0), avg
 
 
-def alert(st, g, call, text):
+def alert(st, g, call, text, agent=""):
     sym, uid = call["sym"], call["uid"]
     price = market.price([sym])
     chg, vol, avg = _day_stats(sym)
@@ -278,8 +285,10 @@ def alert(st, g, call, text):
     elif news is not None:
         lines.append(f"📰 אין חדשות ב-Google News ב-{radar.FRESH_DAYS} הימים האחרונים")
     lines += market.liquidity_lines(sym)
-    lines.append(f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>'
-                 " · ℹ️ התראה בלבד – הסוכן לא קונה לפי הקבוצה")
+    lines.append(f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
+    if danger and agent.startswith("🤖 הסוכן בודק"):
+        agent = "🤖 הסוכן לא יקנה – יש סימן סכנה (למעלה)"
+    lines.append(agent or "ℹ️ התראה בלבד – הסוכן לא קונה לפי הקבוצה כרגע")
     return "\n".join(lines)
 
 
@@ -344,7 +353,7 @@ def command(st, args):
     if not config.TG_SESSION:
         return "👥 קורא הקבוצה עוד לא מחובר."
     lines = ["👥 <b>קבוצת Elevate Trading – טבלת אמינות</b>",
-             "לכל כותב: כמה מהקריאות שלו (👀 / כניסה) הגיעו ל-+20% לפני שירדו 15%, וחציון התשואה אחרי 3 ימים.", ""]
+             "לכל כותב: כמה מהקריאות (👀 / כניסה / ציוץ) הגיעו ל-+20% לפני ירידה של 15%, וחציון התשואה אחרי 3 ימים.", ""]
     ranked = sorted(((uid, u) for uid, u in g["users"].items() if u["n"]),   # judged users first, best hit rate
                     key=lambda x: (x[1]["n"] < 5, -x[1]["w"] / max(1, x[1]["w"] + x[1]["l"]), -x[1]["n"]))
     for uid, u in ranked[:15]:
@@ -357,6 +366,12 @@ def command(st, args):
         for d in g["done"][-8:][::-1]:
             res = {"+20%": "✅ +20% קודם", "-15%": "🔻 -15% קודם"}.get(d["first"], "⚪ לא הוכרע")
             lines.append(f"{esc(d['sym'])} · {esc(_name(g, d['uid']))} · {res} · אחרי 3 ימים {d['c3'] * 100:+.0f}%")
+    pt = trader.init(st)
+    grp = [x for x in pt["closed"] if x.get("src") == "group"]
+    held = [s for s, p in pt["pos"].items() if p.get("src") == "group"]
+    lines += ["", "<b>🤖 קניות הסוכן לפי הקבוצה (וירטואלי):</b>", trader._stats(grp) if grp else "עוד אין מכירות."]
+    if held:
+        lines.append("מוחזקות עכשיו: " + " · ".join(held))
     lines += ["", f"⏳ ממתינות לתוצאה: {len(g['calls'])} · "
                   + ("🔕 התראות מושתקות (<code>/group on</code>)" if g["off"] else "השתקה: <code>/group off</code>")]
     return "\n".join(lines)

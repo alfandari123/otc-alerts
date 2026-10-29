@@ -149,14 +149,14 @@ function render(){
       <div>🛑 עצירה<b>$${px(p.stop)}</b></div>
       <div>מצב<b style="direction:rtl">${p.runner ? '<span class="pill g">בונוס 1/3</span>' : p.be ? '<span class="pill g">בלי הפסד</span>' : '<span class="pill y">בסיכון</span>'}</b></div>
       <div>מוחזקת<b>${days(p.opened).toFixed(1)} ימים</b></div>
-      <div style="grid-column:1/-1">סיבה<b style="direction:rtl;font-size:13px">${esc(p.cat)} · ציון ${p.score}/10 ${p.url ? `· <a href="${esc(p.url)}" target="_blank">לחדשה</a>` : ""}</b></div></div>`
+      <div style="grid-column:1/-1">סיבה<b style="direction:rtl;font-size:13px">${esc(p.cat)}${p.score ? ` · ציון ${p.score}/10` : ""} ${p.url ? `· <a href="${esc(p.url)}" target="_blank">לחדשה</a>` : ""}</b></div></div>`
       + insTable(p.ins);
   } else h += `<div class="empty">אין פוזיציות פתוחות כרגע.</div>`;
   h += `</section>
   ${(d.orders||[]).length ? `<section><h2>פקודות פתוחות ב-Schwab <span class="c">${d.orders.length}</span></h2><div class="wrap"><table><tr><th>מניה</th><th>פעולה</th><th>כמות</th><th>מחיר</th><th>נשלחה</th></tr>` +
     d.orders.map(o => `<tr><td><b>${o.sym}</b></td><td>${o.side === "BUY" ? '<span class="pill g">קנייה</span>' : '<span class="pill r">מכירה</span>'}</td><td class="n">${o.qty.toLocaleString()}</td><td class="n">$${px(o.price)}</td><td>${d8(o.ts)}</td></tr>`).join("") + `</table></div></section>` : ""}
   <section><h2>במעקב לקנייה <span class="c">${d.cands.length}</span></h2>` + (d.cands.length ? `<div class="wrap"><table><tr><th>מניה</th><th>חדשה</th><th>ציון</th><th>מצב</th></tr>` +
-    d.cands.map(c => `<tr><td><b>${c.sym}</b></td><td class="why">${c.url ? `<a href="${esc(c.url)}" target="_blank">${esc(c.cat)}</a>` : esc(c.cat)}</td><td class="n">${c.score}</td><td class="why">${esc(c.why) || "בודק…"}</td></tr>`).join("") + `</table></div>`
+    d.cands.map(c => `<tr><td><b>${c.sym}</b></td><td class="why">${c.url ? `<a href="${esc(c.url)}" target="_blank">${esc(c.cat)}</a>` : esc(c.cat)}</td><td class="n">${c.score || "👥"}</td><td class="why">${esc(c.why) || "בודק…"}</td></tr>`).join("") + `</table></div>`
     : `<div class="empty">אין מניות במעקב כרגע. כשתגיע חדשה חיובית חזקה היא תופיע כאן.</div>`) + `</section>
   <section><h2>היסטוריית מכירות <span class="c">${closed.length}</span></h2>` + (closed.length ? `<div class="wrap"><table><tr><th>תאריך</th><th>מניה</th><th>מניות</th><th>קנייה</th><th>מכירה</th><th>שינוי</th><th>רווח/הפסד</th><th>R</th><th>סיבה</th></tr>` +
     closed.slice().reverse().map(x => { const c = (x.exit/x.entry-1)*100; return `<tr><td>${d8(x.closed)}</td><td><b>${x.sym}</b>${x.part ? ' <span class="pill">חלקית</span>' : ""}</td><td class="n">${x.shares.toLocaleString()}</td><td class="n">$${px(x.entry)}</td><td class="n">$${px(x.exit)}</td><td class="n ${cls(c)}">${pct(c)}</td><td class="n ${cls(x.pnl)}">${usd(x.pnl,1)}</td><td class="n ${cls(x.r)}">${x.r>0?"+":""}${x.r.toFixed(1)}</td><td class="why">${esc(x.why)}</td></tr>`;}).join("") + `</table></div>`

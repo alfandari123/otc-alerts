@@ -131,6 +131,10 @@ GROUP_EVERY_SEC = 60          # check the group for new messages
 GROUP_ALERT_MAX_AGE_MIN = 120 # after downtime, older calls are only scored, not alerted
 GROUP_REALERT_H = 6           # one alert per ticker in 6 hours (more calls on it are still scored)
 GROUP_SCORE_DAYS = 3          # a call is scored 3 days after it was posted (as in tools/group_backtest.py)
+# Buys from group calls (his request 29.10): virtual money only, the same entry rules as a news buy (bot/trader.py)
+GROUP_TRADE_ON = True
+GROUP_TRADE_PCT = 0.05        # size like the weakest news buy
+GROUP_TRADE_MAX_POS = 2       # at most 2 of the 5 places, so news buys keep room
 
 # --- Housekeeping ---
 WATCHLIST_MAX = 150
