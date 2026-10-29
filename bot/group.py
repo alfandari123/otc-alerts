@@ -161,7 +161,7 @@ def cycle(run):
     if not (config.TG_SESSION and config.TG_API_ID and config.TG_API_HASH):
         return
     g = init(st)
-    if time.time() - g["chk"] < (config.GROUP_EVERY_SEC - 5 if not g["dead"] else 3600):
+    if time.time() - g["chk"] < (config.GROUP_EVERY_SEC / 2 if not g["dead"] else 3600):
         return
     g["chk"] = time.time()
     try:
