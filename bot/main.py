@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, atm_trader, config, deal, dilution, inbox, market, radar, rules, schwab, state, telegram, trader
+from . import ai, atm_trader, config, deal, dilution, group, inbox, market, radar, rules, schwab, state, telegram, trader
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -36,13 +36,15 @@ HELP = """🤖 <b>בוט התראות OTC</b>
 /dashboard – מסך המסחר (גרפים, פוזיציות, היסטוריה)
 /schwab – מצב החיבור ל-Schwab + כפתור התחברות
 /stop – הסוכן מפסיק לקנות (ממשיך לנהל מה שבידיו) · /go – חוזר לקנות
+/group – טבלת האמינות של קבוצת Elevate Trading · <code>/group off</code> / <code>on</code> – השתקה / החזרה
 /help – העזרה הזו
-אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code> · <code>מסך</code> · <code>שוואב</code> · <code>עצור</code> · <code>המשך</code>
+אפשר גם בעברית: <code>הוסף ABCD</code> · <code>הסר ABCD</code> · <code>רשימה</code> · <code>תיק</code> · <code>עסקאות</code> · <code>מסך</code> · <code>שוואב</code> · <code>עצור</code> · <code>המשך</code> · <code>קבוצה</code>
 
 <b>סוכן מסחר (כסף וירטואלי, $5,000, עמלת Schwab $6.95 לפעולה):</b>
 קונה אחרי חדשה חיובית חזקה רק ביחס 1:3 לפחות אחרי עמלות, לא נוגע במדללים פעילים,
 מזיז את העצירה למחיר הקנייה כשהרווח שווה לסיכון, וביעד מוכר 2/3 ומשאיר 1/3 כבונוס.
 🛒 קנייה · ✅ מכירה ברווח · 🔻 מכירה בהפסד · ℹ️ הסבר על מכירה כבדה
+👥 קריאה בקבוצת Elevate Trading (👀 או כניסה), עם הרקורד של הכותב ובדיקות הבוט – התראה בלבד, בלי קנייה
 
 <b>סימנים בהתראות:</b>
 🟢 חדשה חיובית · 🔴 חדשה שלילית · ⚪ ניטרלית · 📈 ווליום חריג · ⭐ מניה מהרשימה שלך
@@ -161,6 +163,8 @@ def command(st, text):
     if cmd in ("/go", "go", "המשך"):
         trader.init(st)["paused"] = False
         return "▶️ הסוכן חזר לקנות."
+    if cmd in ("/group", "group", "קבוצה"):
+        return group.command(st, args)
     if cmd in ("/dashboard", "/screen", "dashboard", "מסך"):
         return DASH_TEXT, telegram.web_app_button("📈 מסך מסחר", state.dash_url())
     if cmd in ("/test", "test", "בדיקה"):
@@ -681,6 +685,10 @@ def cycle(st, args):
             atm_trader.cycle(run)
         except Exception as e:
             log(f"atm: FAILED ({short_err(e)})")
+        try:
+            group.cycle(run)
+        except Exception as e:
+            log(f"group: FAILED ({short_err(e)})")
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
         if config.GEMINI_API_KEY:   # a one-off timeout is not an outage; only a bad key / used-up quota is

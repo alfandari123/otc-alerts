@@ -26,6 +26,8 @@ def chart(sym):
                 "ts": r.get("timestamp") or [],
                 "vol": q[0].get("volume") or [],
                 "close": q[0].get("close") or [],
+                "otc": is_otc_meta(r["meta"]),
+                "name": r["meta"].get("longName") or r["meta"].get("shortName") or "",
             }
         stats["ok"] += 1
     except net.HttpError as e:
@@ -38,6 +40,12 @@ def chart(sym):
         pass
     _cache[sym] = res
     return res
+
+
+def is_otc_meta(meta):
+    """Yahoo chart meta of an OTC stock (exchange OID/PNK/OQB/OQX... or 'OTC Markets ...')."""
+    return "OTC" in (meta.get("fullExchangeName") or "").upper() or meta.get("exchangeName") in (
+        "PNK", "OID", "OQB", "OQX", "OEM", "OBB", "OTC")
 
 
 def price(syms):

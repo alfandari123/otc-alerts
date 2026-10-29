@@ -2,6 +2,7 @@
 
     python tools/bot_cmd.py add TLHC FMBV
     python tools/bot_cmd.py remove ABCD EFGH --note "..."
+    python tools/bot_cmd.py grpseed          # group scoreboard from ~/.otc-secrets/group_seed.json (group_backtest.py)
 
 The commands are encrypted with the bot's key (.state_key) and pushed to the `inbox` branch - the repo is public,
 so tickers never appear in clear text. Old commands stay in the file; the bot remembers which ones it applied.
@@ -25,8 +26,8 @@ def sh(*args, cwd=ROOT):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("op", choices=["add", "remove"])
-    ap.add_argument("syms", nargs="+")
+    ap.add_argument("op", choices=["add", "remove", "grpseed"])
+    ap.add_argument("syms", nargs="*")
     ap.add_argument("--note", default="")
     a = ap.parse_args()
     fernet = Fernet((ROOT / ".state_key").read_bytes().strip())
@@ -36,7 +37,10 @@ def main():
         sh("git", "fetch", "-q", "origin", "inbox")
         raw = subprocess.run(["git", "show", "FETCH_HEAD:inbox.bin"], cwd=ROOT, check=True, capture_output=True).stdout
         cmds = json.loads(fernet.decrypt(raw))
-    cmds = cmds[-50:] + [{"id": uuid.uuid4().hex, "op": a.op, "syms": [s.upper() for s in a.syms], "note": a.note}]
+    cmd = {"id": uuid.uuid4().hex, "op": a.op, "syms": [s.upper() for s in a.syms], "note": a.note}
+    if a.op == "grpseed":
+        cmd.update(json.loads((Path.home() / ".otc-secrets" / "group_seed.json").read_text(encoding="utf-8")))
+    cmds = cmds[-50:] + [cmd]
     with tempfile.TemporaryDirectory() as tmp:
         Path(tmp, "inbox.bin").write_bytes(fernet.encrypt(json.dumps(cmds).encode()))
         sh("git", "init", "-q", "-b", "inbox", cwd=tmp)

@@ -9,7 +9,7 @@ import os
 
 from cryptography.fernet import Fernet
 
-from . import config
+from . import config, group
 from .util import log
 
 PATH = "inbox.bin"
@@ -37,11 +37,16 @@ def apply(run, tickers):
             removed = [s for s in syms if s in st["watch"]]
             st["watch"] = [s for s in st["watch"] if s not in removed]
             text = f"🗑️ הוסרו מרשימת המעקב (מהמחשב): {', '.join(removed) or 'לא היו ברשימה'}"
+        elif c.get("op") == "grpseed":
+            n = group.seed(st, c.get("users") or {}, c.get("names") or {}, c.get("secid") or {})
+            text = f"👥 טבלת האמינות של הקבוצה נטענה מהבדיקה ההיסטורית ({n} כותבים). לצפייה: /group"
         else:
             text = ""
         if text and c.get("note"):
             text += f"\n{c['note']}"
-        if text:
+        if text and c.get("op") == "grpseed":
+            run.notify(text)
+        elif text:
             run.notify(text + f"\n\n📋 הרשימה: {' · '.join(sorted(st['watch'])) or 'ריקה'}")
         done.append(c.get("id"))
         log("inbox: command applied")

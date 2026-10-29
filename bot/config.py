@@ -126,6 +126,12 @@ ATM_SCAN_PAGES = 20           # 20 x 50 most active OTC stocks
 # --- Radar for held stocks: Google News + SEC filings by company number (bot/radar.py) ---
 RADAR_EVERY_MIN = 10
 
+# --- Elevate Trading Telegram group (bot/group.py), read through Reuven's own Telegram account ---
+GROUP_EVERY_SEC = 60          # check the group for new messages
+GROUP_ALERT_MAX_AGE_MIN = 120 # after downtime, older calls are only scored, not alerted
+GROUP_REALERT_H = 6           # one alert per ticker in 6 hours (more calls on it are still scored)
+GROUP_SCORE_DAYS = 3          # a call is scored 3 days after it was posted (as in tools/group_backtest.py)
+
 # --- Housekeeping ---
 WATCHLIST_MAX = 150
 SEEN_TTL_DAYS = 10
@@ -136,6 +142,9 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 STATE_KEY = os.environ.get("STATE_KEY", "").strip()
 SEC_CONTACT = os.environ.get("SEC_CONTACT", "").strip()  # SEC requires a contact e-mail
+TG_API_ID = os.environ.get("TG_API_ID", "").strip()        # Reuven's Telegram app (my.telegram.org) ...
+TG_API_HASH = os.environ.get("TG_API_HASH", "").strip()
+TG_SESSION = os.environ.get("TG_SESSION", "").strip()      # ... and login (full access to his account!)
 
 IN_CLOUD = os.environ.get("GITHUB_ACTIONS") == "true"
 

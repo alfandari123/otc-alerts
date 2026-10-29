@@ -74,6 +74,9 @@ jobs:
           SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
           SCHWAB_BOT_KEY: ${{ secrets.SCHWAB_BOT_KEY }}
           SCHWAB_LOGIN_KEY: ${{ secrets.SCHWAB_LOGIN_KEY }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
         run: python -m bot.main ${{ inputs.fast == 'true' && '--loop 240' || '' }}
 
       - name: Save state

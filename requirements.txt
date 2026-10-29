@@ -3,3 +3,4 @@ cryptography>=43
 tzdata
 pypdf>=5
 websocket-client>=1.8
+telethon>=1.45
