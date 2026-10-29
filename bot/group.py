@@ -286,7 +286,7 @@ def alert(st, g, call, text, agent=""):
         lines.append(f"📰 אין חדשות ב-Google News ב-{radar.FRESH_DAYS} הימים האחרונים")
     lines += market.liquidity_lines(sym)
     lines.append(f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
-    if danger and agent.startswith("🤖 הסוכן בודק"):
+    if danger and "אם לקנות" in agent:
         agent = "🤖 הסוכן לא יקנה – יש סימן סכנה (למעלה)"
     lines.append(agent or "ℹ️ התראה בלבד – הסוכן לא קונה לפי הקבוצה כרגע")
     return "\n".join(lines)

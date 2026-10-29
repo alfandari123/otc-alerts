@@ -353,9 +353,11 @@ def evaluate(run, it):
     if it["src"] in TEMPLATED:
         strong = rule["ps"] >= 3 and (price or 0) <= config.EVENT_ABOVE_RANGE_MAX_PRICE
         if hit or band == "in" or strong:
-            if rule["pol"] > 0 and rule["ps"] >= 3 and band == "in" and syms:
-                trader.on_news(st, syms[0], rules.fallback_score(rule), rule["label"], it, price)
-            return action_message(it, rule, syms, price, bool(hit), _dil(st, syms))
+            agent = ""
+            if rule["pol"] > 0 and rule["ps"] >= 3 and syms:
+                agent = (trader.on_news(st, syms[0], rules.fallback_score(rule), rule["label"], it, price)
+                         if band == "in" else trader.skip_text(band))
+            return action_message(it, rule, syms, price, bool(hit), _dil(st, syms), agent)
         return None
 
     res = None
@@ -391,9 +393,13 @@ def evaluate(run, it):
             return None
     if syms and deal.kind(it.get("deal")) == "merger_restricted":
         trader.on_deal(st, syms, it["deal"])
-    if res and syms and sentiment == "positive" and score >= config.TRADE_MIN_SCORE and band == "in":
-        trader.on_news(st, syms[0], score, res["category_he"] or rule["label"], it, price)
-    return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms))
+    agent = ""            # one line on what the paper agent does with strong good news (his request 29.10, ODRS)
+    if syms and sentiment == "positive" and score >= config.TRADE_MIN_SCORE:
+        if res and band == "in":
+            agent = trader.on_news(st, syms[0], score, res["category_he"] or rule["label"], it, price)
+        else:
+            agent = trader.skip_text(band, ai=bool(res))
+    return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms), agent)
 
 
 def _head(icon, sym, price, hit):
@@ -413,7 +419,7 @@ def _links(it, sym):
     return f"📄 {esc(it['src_label'])} · {links}"
 
 
-def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None):
+def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None, agent=""):
     sym = syms[0] if syms else ""
     lines = [_head(ICON[sentiment], sym, price, hit)]
     if hit and sentiment == "negative":
@@ -438,10 +444,12 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None):
     lines.append(_links(it, sym))
     if not res:
         lines.append("<i>(בלי AI – זיהוי לפי מילות מפתח)</i>")
+    if agent:
+        lines.append(agent)
     return "\n".join(lines)
 
 
-def action_message(it, rule, syms, price, hit, dil=None):
+def action_message(it, rule, syms, price, hit, dil=None, agent=""):
     """Fixed-format message for FINRA / OTC Markets events."""
     pol = rule["pol"]
     sym = syms[0] if syms else ""
@@ -456,6 +464,8 @@ def action_message(it, rule, syms, price, hit, dil=None):
     lines += dilution.lines(dil)
     lines += market.liquidity_lines(*syms[:2])
     lines.append(_links(it, sym))
+    if agent:
+        lines.append(agent)
     return "\n".join(lines)
 
 

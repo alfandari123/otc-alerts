@@ -229,26 +229,49 @@ def price_class(p):
 # ---------- hooks called from main.py ----------
 
 def on_news(st, sym, score, cat, it, price):
-    """A strong positive news item: the stock becomes a candidate for a buy."""
+    """A strong positive news item: the stock becomes a candidate for a buy.
+    Returns a Hebrew line for the alert: what the agent does with it."""
     if not config.TRADE_ON or not sym:
-        return
+        return ""
     pt = init(st)
     if sym in pt["pos"]:
         pt["pos"][sym]["news"] = [time.time(), cat]     # fresh good news for a stock we hold
-        return
+        return "📌 המניה כבר בתיק של הסוכן – החדשה נרשמה"
     atm_pos = (pt.get("atm") or {}).get("pos", {})
     if sym in atm_pos:
         atm_pos[sym]["news"] = [time.time(), cat]       # an ATM stock with news: do not sell it at the ceiling
-        return
+        return "📌 המניה בתיק הכספומט של הסוכן – בגלל החדשה הוא לא ימכור אותה בתקרה"
     if sym in pt["cands"]:
-        return
+        return "🤖 המניה כבר במעקב לקנייה אצל הסוכן"
     tier = (it.get("tier") or "").lower()
     if "expert" in tier or "grey" in tier:
-        return
+        return "🤖 הסוכן לא קונה: המניה בשוק האפור / Expert Market"
     pt["cands"][sym] = {"ts": time.time(), "score": score, "cat": cat, "price": price, "ref": None,
                         "deadline": None, "why": "", "title": (it.get("title") or "")[:120],
                         "url": it.get("url", ""), "company": it.get("company") or ""}
     log("trader: new candidate")
+    return watch_text(pt)
+
+
+def watch_text(pt):
+    """When the agent looks for an entry for a new candidate (Hebrew line for the alert)."""
+    if pt["paused"]:
+        return "⏸️ הסוכן בהשהיה – לא יקנה עד /go"
+    now = et_now()
+    if _session(now) == "open" and _mins(now) <= config.TRADE_ENTRY_UNTIL:
+        return f"🤖 הסוכן בודק אם לקנות – עד {config.TRADE_WINDOW_MIN // 60} שעות מעכשיו"
+    return "🤖 הסוכן יבדוק אם לקנות בפתיחת המסחר הבאה"
+
+
+def skip_text(band, ai=True):
+    """Why the agent does not look at a strong positive news item (Hebrew line for the alert)."""
+    if not config.TRADE_ON:
+        return ""
+    if not ai:
+        return "🤖 הסוכן לא קונה בלי ניתוח AI של החדשה"
+    if band == "above":
+        return f"🤖 הסוכן לא קונה: המחיר מעל ${fmt_price(config.MAX_PRICE)} (הוא קונה רק מניות עד סנט)"
+    return "🤖 הסוכן לא קונה: אין לבוט מחיר ומסחר של המניה"
 
 
 def on_group(st, sym, cat, ts):
@@ -265,8 +288,7 @@ def on_group(st, sym, cat, ts):
     pt["cands"][sym] = {"ts": ts, "score": 0, "src": "group", "cat": cat, "price": None, "ref": None,
                         "deadline": None, "why": "", "title": "", "url": "", "company": ""}
     log("trader: new group candidate")
-    return ("🤖 הסוכן בודק אם לקנות (כסף וירטואלי) – באותם כללים של קנייה אחרי חדשה, "
-            "עד שעתיים מהקריאה (או מפתיחת המסחר)")
+    return watch_text(pt) + " (כסף וירטואלי, באותם כללים של קנייה אחרי חדשה)"
 
 
 def _before(c):
@@ -1035,6 +1057,8 @@ def cycle(run):
         for sym in list(pt["cands"]):
             c = pt["cands"][sym]
             if c["deadline"] is None:
+                if _mins(now) > config.TRADE_ENTRY_UNTIL:
+                    continue            # news in the last half hour waits for the next session (no entries now)
                 open_ts = datetime(now.year, now.month, now.day, 9, 30, tzinfo=ET).timestamp()
                 c["deadline"] = max(c["ts"], open_ts) + config.TRADE_WINDOW_MIN * 60
             try:
