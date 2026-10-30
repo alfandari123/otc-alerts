@@ -40,6 +40,9 @@ def apply(run, tickers):
         elif c.get("op") == "grpseed":
             n = group.seed(st, c.get("users") or {}, c.get("names") or {}, c.get("secid") or {})
             text = f"👥 טבלת האמינות של הקבוצה נטענה מהבדיקה ההיסטורית ({n} כותבים). לצפייה: /group"
+        elif c.get("op") == "secid":       # OTC Markets ids looked up later at home: silent, the table stays
+            st.setdefault("secid", {}).update(c.get("secid") or {})
+            text = ""
         else:
             text = ""
         if text and c.get("note"):
