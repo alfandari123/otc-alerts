@@ -189,12 +189,26 @@ def xcheck():
     url = f"{GQL_URL}/{OP_UserByScreenName}"
     params = {"variables": json.dumps({"screen_name": "SeanTwizer"}), "features": json.dumps(GQL_FEATURES)}
     hh = {k: v for k, v in h.items() if k != "User-Agent"}
-    for imp in ("chrome", "safari"):
-        try:
-            r = creq.get(url, params=params, headers=hh, impersonate=imp, timeout=25)
-            print("raw gql", imp, r.status_code, r.headers.get("server"), " ".join(r.text[:300].split()))
-        except Exception as e:
-            print("raw gql", imp, "ERR", type(e).__name__)
+    from twscrape.api import OP_Following, OP_SearchTimeline
+    tests = [("user", OP_UserByScreenName, {"screen_name": "SeanTwizer"}),
+             ("search", OP_SearchTimeline, {"rawQuery": "from:WhalePenny OR from:PikachOTC", "count": 20,
+                                            "product": "Latest", "querySource": "typed_query"}),
+             ("following", OP_Following, {"userId": "1318216507252428800", "count": 100})]
+    for name, op, var in tests:
+        for method in ("GET", "POST"):
+            try:
+                u = f"{GQL_URL}/{op}"
+                if method == "GET":
+                    r = creq.get(u, params={"variables": json.dumps(var), "features": json.dumps(GQL_FEATURES)},
+                                 headers=hh, impersonate="chrome", timeout=25)
+                else:
+                    r = creq.post(u, json={"variables": var, "features": GQL_FEATURES, "queryId": op.split("/")[0]},
+                                  headers=hh, impersonate="chrome", timeout=25)
+                t = r.text
+                print("raw gql", name, method, r.status_code, len(t), "tweets~", t.count('"tweet_results"'),
+                      "users~", t.count('"user_results"'), " ".join(t[:160].split()) if r.status_code != 200 else "")
+            except Exception as e:
+                print("raw gql", name, method, "ERR", type(e).__name__)
     import asyncio
     from . import xfeed
 
