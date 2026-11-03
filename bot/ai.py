@@ -46,6 +46,33 @@ Text:
 {text}
 """
 
+TWEET_PROMPT = """You help a trader of US OTC penny stocks (mostly sub-penny). Below is a new post on X (Twitter) from an
+account followed by an experienced OTC trader. Judge it like his course teaches: who is talking (the company's CEO,
+founder, officer or official account = insider; a paid promoter / alert service; a known trader; an anonymous account),
+whether it is a pump / manipulation for a quick profit (hype, rockets, "next 1000%", no facts, paid promotion,
+coordinated callouts, an insider hyping while the company dilutes), and whether it gives real information BEFORE the
+market (merger, reverse merger, change of control, custodianship, share cancellation, uplisting, a filing or
+news coming soon, big contract, a CEO confirming something concrete).
+
+Answer ONLY with JSON:
+{{
+ "role": "insider" | "company" | "promoter" | "trader" | "news" | "other",
+ "role_he": "who the author is, in Hebrew, 2-6 words (e.g. 'מנכ\"ל החברה', 'שירות קידום מניות', 'סוחר OTC')",
+ "score": integer 1-10, how likely this post is to push the stock UP soon with substance
+          (1 = noise/irrelevant, 5 = minor, 7 = concrete early information, 9-10 = major catalyst confirmed by an insider),
+ "pump": integer 0-10, how much this looks like hype / manipulation for a quick profit,
+ "early": true if it holds concrete information that is probably not in the news yet, else false,
+ "summary_he": "1-2 short, simple Hebrew sentences: what the post says and why it matters",
+ "risk_he": "short Hebrew note on red flags (pump signs, paid promotion, dilution hints); empty string if none"
+}}
+
+Author: {name} (@{handle}), {followers} followers
+Bio: {bio}
+Tickers in the post: {syms}
+Post:
+{text}
+"""
+
 calls = 0            # successful calls in this run
 last_error = ""
 _model = None        # first model that worked in this run
@@ -70,13 +97,24 @@ def broken():
 
 def analyze(item, price=None):
     """Returns a dict, or None when the AI is unavailable."""
-    global calls, last_error, _model, _auth_failed
     prompt = PROMPT.format(
         src=item.get("src_label", ""), company=item.get("company", ""),
         tickers=", ".join(item.get("syms") or []) or "unknown", tier=item.get("tier") or "unknown",
         price=f"${price}" if price else "unknown", shares=item.get("shares") or "unknown",
         title=item.get("title", ""), text=(item.get("text") or "")[:9000],
     )
+    return _ask(prompt, _parse)
+
+
+def analyze_tweet(t):
+    """AI read of one tweet (bot/xfeed.py). Returns a dict, or None when the AI is unavailable."""
+    prompt = TWEET_PROMPT.format(name=t["name"], handle=t["handle"], bio=t["bio"] or "none",
+                                 followers=t["followers"], syms=", ".join(t["syms"]), text=t["text"][:3000])
+    return _ask(prompt, _parse_tweet)
+
+
+def _ask(prompt, parse):
+    global calls, last_error, _model, _auth_failed
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"},
@@ -98,7 +136,7 @@ def analyze(item, price=None):
                 _skip.add(m)         # overloaded right now (e.g. 503 "high demand"): try the next model
                 break
             if r.status_code == 200:
-                res = _parse(r)
+                res = parse(r)
                 if res:
                     _model = m
                     calls += 1
@@ -141,6 +179,26 @@ def _parse(r):
             "summary_he": str(d.get("summary_he", ""))[:700],
             "risk_he": str(d.get("risk_he", ""))[:300],
             "ticker": re.sub(r"[^A-Z]", "", str(d.get("ticker", "")).upper())[:6],
+        }
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+
+
+def _parse_tweet(r):
+    try:
+        parts = r.json()["candidates"][0]["content"]["parts"]
+        text = re.sub(r"^```(?:json)?|```$", "", "".join(p.get("text", "") for p in parts).strip()).strip()
+        d = json.loads(text)
+        if isinstance(d, list):
+            d = d[0]
+        return {
+            "role": str(d.get("role", "other"))[:12],
+            "role_he": str(d.get("role_he", ""))[:60],
+            "score": max(1, min(10, int(float(d.get("score", 1))))),
+            "pump": max(0, min(10, int(float(d.get("pump", 0))))),
+            "early": bool(d.get("early")),
+            "summary_he": str(d.get("summary_he", ""))[:500],
+            "risk_he": str(d.get("risk_he", ""))[:300],
         }
     except (KeyError, IndexError, ValueError, TypeError):
         return None

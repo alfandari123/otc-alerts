@@ -136,6 +136,12 @@ GROUP_TRADE_ON = True
 GROUP_TRADE_PCT = 0.05        # size like the weakest news buy
 GROUP_TRADE_MAX_POS = 2       # at most 2 of the 5 places, so news buys keep room
 
+# --- X (Twitter): posts of the accounts Sean Toizer follows (bot/xfeed.py), read through the bot's own X account ---
+X_EVERY_SEC = 180             # X search allows ~50 searches / 15 min per account: 4 searches every 3 min
+X_PER_QUERY = 20              # handles in one "from:a OR from:b" search (X caps the query length)
+X_ALERT_MIN_SCORE = 6         # AI score needed for an alert (an insider/company post or early info always alerts)
+X_TRADE_MAX_PUMP = 5          # the agent ignores posts the AI rates as hype above this
+
 # --- Housekeeping ---
 WATCHLIST_MAX = 150
 SEEN_TTL_DAYS = 10
@@ -149,6 +155,7 @@ SEC_CONTACT = os.environ.get("SEC_CONTACT", "").strip()  # SEC requires a contac
 TG_API_ID = os.environ.get("TG_API_ID", "").strip()        # Reuven's Telegram app (my.telegram.org) ...
 TG_API_HASH = os.environ.get("TG_API_HASH", "").strip()
 TG_SESSION = os.environ.get("TG_SESSION", "").strip()      # ... and login (full access to his account!)
+X_COOKIES = os.environ.get("X_COOKIES", "").strip()        # "auth_token=...; ct0=..." of the bot's X account
 
 IN_CLOUD = os.environ.get("GITHUB_ACTIONS") == "true"
 

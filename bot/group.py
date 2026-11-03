@@ -262,6 +262,13 @@ def alert(st, g, call, text, agent=""):
     snippet = " ".join((text or "").split())
     if snippet:
         lines.append("💬 " + esc(snippet[:150] + ("…" if len(snippet) > 150 else "")))
+    return "\n".join(lines + checks(st, sym, vol, avg, agent or "ℹ️ התראה בלבד – הסוכן לא קונה לפי הקבוצה כרגע"))
+
+
+def checks(st, sym, vol, avg, agent):
+    """The bot's own checks on a stock someone called (here and in bot/xfeed.py): volume, dilution, danger, news,
+    liquidity, and the agent's line last."""
+    lines = []
     if vol is not None:
         ratio = f"פי {vol / avg:.1f} מהממוצע" if avg else "בדרך כלל כמעט אין בה מסחר"
         lines.append(f"📈 ווליום היום: {vol:,} – {ratio}" if vol else "📈 עוד אין מסחר היום")
@@ -271,7 +278,7 @@ def alert(st, g, call, text, agent=""):
         danger = trader._danger(st, sym)
     except Exception as e:
         danger = ""
-        log(f"group: danger check failed ({short_err(e)})")
+        log(f"checks: danger check failed ({short_err(e)})")
     if danger:
         lines.append(f"⛔ בדיקת הבוט: {esc(danger)}")
     elif dil:
@@ -288,8 +295,8 @@ def alert(st, g, call, text, agent=""):
     lines.append(f'<a href="https://www.otcmarkets.com/stock/{sym}/overview">OTC Markets</a>')
     if danger and "אם לקנות" in agent:
         agent = "🤖 הסוכן לא יקנה – יש סימן סכנה (למעלה)"
-    lines.append(agent or "ℹ️ התראה בלבד – הסוכן לא קונה לפי הקבוצה כרגע")
-    return "\n".join(lines)
+    lines.append(agent)
+    return lines
 
 
 def _news(sym):
