@@ -3,10 +3,9 @@
 pump or real early information), the same checks as a group call, an alert, and - when strong - goes to the paper agent.
 Never log post text, names or tickers (the Actions logs are public)."""
 
-import asyncio
+import json
 import os
 import re
-import tempfile
 import time
 
 from . import ai, config, group, market, trader
@@ -20,6 +19,10 @@ CASH = re.compile(r"\$([A-Za-z]{2,5})(?![A-Za-z])")
 ROLE_HE = {"insider": "👔", "company": "🏢", "promoter": "📣", "trader": "📊", "news": "📰"}
 
 
+class Dead(Exception):
+    """X refused the bot's login (logged out / locked)."""
+
+
 def init(st):
     x = st.setdefault("x", {})
     for k, v in (("last", 0), ("chk", 0), ("users", []), ("uchk", 0), ("alerted", {}), ("off", False),
@@ -31,33 +34,70 @@ def init(st):
     return x
 
 
-def _api():
-    os.environ.setdefault("TWS_HTTP_BACKEND", "curl")   # X blocks the default httpx client (403 "Cloudflare")
-    from twscrape import API, AccountsPool
-    pool = AccountsPool(os.path.join(tempfile.mkdtemp(), "x.db"), raise_when_no_account=True)
-    return API(pool, raise_when_no_account=True), pool
+def _gql(op, variables):
+    """One X web GraphQL call as the bot's account. POST: X answers 404 to a GET search from this account, and
+    twscrape's own client gets 403 from GitHub - a plain browser-like (curl-cffi) POST works."""
+    from curl_cffi import requests as creq
+    from twscrape.account import TOKEN
+    from twscrape.api import GQL_FEATURES, GQL_URL
+    ck = dict(kv.strip().split("=", 1) for kv in config.X_COOKIES.split(";") if "=" in kv)
+    r = creq.post(f"{GQL_URL}/{op}", json={"variables": variables, "features": GQL_FEATURES,
+                                           "queryId": op.split("/")[0]},
+                  headers={"authorization": TOKEN, "x-csrf-token": ck.get("ct0", ""), "x-twitter-active-user": "yes",
+                           "x-twitter-auth-type": "OAuth2Session",
+                           "cookie": "; ".join(f"{k}={v}" for k, v in ck.items())},
+                  impersonate="chrome", timeout=30)
+    if r.status_code in (401, 403) or '"code":32' in r.text[:300]:
+        raise Dead(f"HTTP {r.status_code}")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}")
+    return r.json()
 
 
-async def _fetch(x):
+def _following():
+    from twscrape.api import OP_Following, OP_UserByScreenName
+    from twscrape.models import parse_users
+    m = re.search(r'"rest_id":"(\d+)"', json.dumps(_gql(OP_UserByScreenName, {"screen_name": SEAN})))
+    if not m:
+        return []
+    out, cursor = [], None
+    for _ in range(25):
+        v = {"userId": m.group(1), "count": 100, "includePromotedContent": False}
+        if cursor:
+            v["cursor"] = cursor
+        rep = _gql(OP_Following, v)
+        got = [u.username for u in parse_users(rep)]
+        out += [h for h in got if h not in out]
+        c = re.search(r'"value":"([^"]+)","cursorType":"Bottom"', json.dumps(rep))
+        if not got or not c:
+            break
+        cursor = c.group(1)
+        time.sleep(1)
+    return out
+
+
+def _fetch(x):
     """New posts (oldest first) and, once a day, the fresh list of accounts Sean follows."""
-    from twscrape import gather
-    api, pool = _api()
-    await pool.add_account("bot", "-", "-", "-", cookies=config.X_COOKIES)
+    from twscrape.api import OP_SearchTimeline
+    from twscrape.models import parse_tweets
     users = None
     if time.time() - x["uchk"] > DAY:
         x["uchk"] = time.time()
         try:
-            sean = await api.user_by_login(SEAN)
-            got = [u.username for u in await gather(api.following(sean.id, limit=1500))] if sean else []
+            got = _following()
+            log(f"x: Sean follows {len(got)} (visible)")
             if len(got) >= len(x["users"]) * 0.8:     # a short page (X limits) must not shrink the list
                 users = got
+        except Dead:
+            raise
         except Exception as e:
             log(f"x: following list failed ({short_err(e)})")
     handles = (users or x["users"])[:config.X_MAX_HANDLES]
     posts = {}
     for i in range(0, len(handles), config.X_PER_QUERY):
         q = " OR ".join(f"from:{h}" for h in handles[i:i + config.X_PER_QUERY])
-        for t in await gather(api.search(q, limit=40)):
+        rep = _gql(OP_SearchTimeline, {"rawQuery": q, "count": 40, "product": "Latest", "querySource": "typed_query"})
+        for t in parse_tweets(rep):
             if t.id > x["last"]:
                 posts[t.id] = t
     return sorted(posts.values(), key=lambda t: t.id), users
@@ -72,9 +112,9 @@ def cycle(run):
         return
     x["chk"] = time.time()
     try:
-        posts, users = asyncio.run(_fetch(x))
+        posts, users = _fetch(x)
     except Exception as e:
-        if "NoAccount" in type(e).__name__ or "No account" in str(e):
+        if isinstance(e, Dead):
             if not x["dead"] and run.notify("🔌 <b>החיבור לטוויטר נותק</b>\n"
                                             "כנראה טוויטר ניתק את חשבון הבוט. צריך להתחבר מחדש ולהעביר מפתח חדש."):
                 x["dead"] = True

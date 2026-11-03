@@ -209,20 +209,16 @@ def xcheck():
                       "users~", t.count('"user_results"'), " ".join(t[:160].split()) if r.status_code != 200 else "")
             except Exception as e:
                 print("raw gql", name, method, "ERR", type(e).__name__)
-    import asyncio
     from . import xfeed
-
-    async def tw():
-        api, pool = xfeed._api()
-        await pool.add_account("bot", "-", "-", "-", cookies=config.X_COOKIES)
-        u = await api.user_by_login(xfeed.SEAN)
-        print("twscrape user_by_login:", "ok, following=" + str(u.friendsCount) if u else "None")
-        from twscrape import gather
-        print("twscrape search posts:", len(await gather(api.search("from:WhalePenny OR from:PikachOTC", limit=10))))
     try:
-        asyncio.run(tw())
+        f = xfeed._following()
+        print("xfeed following:", len(f))
+        x = {"last": 0, "uchk": time.time(), "users": f or xfeed.init({})["users"]}
+        posts, _ = xfeed._fetch(x)
+        print("xfeed posts:", len(posts), "| with cashtags:", sum(1 for t in posts if t.cashtags),
+              "| newest age min:", round((time.time() - posts[-1].date.timestamp()) / 60) if posts else "-")
     except Exception as e:
-        print("twscrape ERR", type(e).__name__, str(e)[:150])
+        print("xfeed ERR", type(e).__name__, str(e)[:150])
 
 
 def main():
