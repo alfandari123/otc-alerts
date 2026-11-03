@@ -52,7 +52,7 @@ async def _fetch(x):
                 users = got
         except Exception as e:
             log(f"x: following list failed ({short_err(e)})")
-    handles = users or x["users"]
+    handles = (users or x["users"])[:config.X_MAX_HANDLES]
     posts = {}
     for i in range(0, len(handles), config.X_PER_QUERY):
         q = " OR ".join(f"from:{h}" for h in handles[i:i + config.X_PER_QUERY])
