@@ -183,6 +183,18 @@ def xcheck():
             print(url.split("/")[2], url.rsplit("/", 1)[1], r.status_code, " ".join(body.split()))
         except Exception as e:
             print(url, "ERR", type(e).__name__)
+    import json
+    from curl_cffi import requests as creq
+    from twscrape.api import GQL_FEATURES, GQL_URL, OP_UserByScreenName
+    url = f"{GQL_URL}/{OP_UserByScreenName}"
+    params = {"variables": json.dumps({"screen_name": "SeanTwizer"}), "features": json.dumps(GQL_FEATURES)}
+    hh = {k: v for k, v in h.items() if k != "User-Agent"}
+    for imp in ("chrome", "safari"):
+        try:
+            r = creq.get(url, params=params, headers=hh, impersonate=imp, timeout=25)
+            print("raw gql", imp, r.status_code, r.headers.get("server"), " ".join(r.text[:300].split()))
+        except Exception as e:
+            print("raw gql", imp, "ERR", type(e).__name__)
     import asyncio
     from . import xfeed
 
