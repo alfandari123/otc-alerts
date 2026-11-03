@@ -142,6 +142,7 @@ X_PER_QUERY = 20              # handles in one "from:a OR from:b" search (X caps
 X_MAX_HANDLES = 80            # more would pass the search limit; the full 987 need an X List (one read for all)
 X_ALERT_MIN_SCORE = 6         # AI score needed for an alert (an insider/company post or early info always alerts)
 X_TRADE_MAX_PUMP = 5          # the agent ignores posts the AI rates as hype above this
+X_AI_PER_HOUR = 30            # AI reads of posts per hour (the free Gemini quota also serves the news)
 
 # --- Housekeeping ---
 WATCHLIST_MAX = 150

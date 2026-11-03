@@ -155,7 +155,13 @@ def on_post(run, x, t):
     u = t.user
     post = {"name": u.displayname, "handle": u.username, "bio": u.rawDescription, "followers": u.followersCount,
             "syms": syms, "text": text}
+    x["ai"] = [s for s in x.get("ai", []) if time.time() - s < 3600]
+    if len(x["ai"]) >= config.X_AI_PER_HOUR:      # the free AI quota is shared with the news alerts
+        log("x: AI hourly cap reached, post skipped")
+        return len(syms)
     a = ai.analyze_tweet(post) if ai.usable() else None
+    if a:
+        x["ai"].append(time.time())
     if a and a["score"] < config.X_ALERT_MIN_SCORE and not a["early"] and a["role"] not in ("insider", "company"):
         return len(syms)
     for sym in syms:
