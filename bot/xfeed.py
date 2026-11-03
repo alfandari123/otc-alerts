@@ -32,6 +32,7 @@ def init(st):
 
 
 def _api():
+    os.environ.setdefault("TWS_HTTP_BACKEND", "curl")   # X blocks the default httpx client (403 "Cloudflare")
     from twscrape import API, AccountsPool
     pool = AccountsPool(os.path.join(tempfile.mkdtemp(), "x.db"), raise_when_no_account=True)
     return API(pool, raise_when_no_account=True), pool
@@ -67,7 +68,7 @@ def cycle(run):
     if not config.X_COOKIES:
         return
     x = init(st)
-    if time.time() - x["chk"] < (config.X_EVERY_SEC if not x["dead"] else 3600):
+    if time.time() - x["chk"] < (config.X_EVERY_SEC if not x["dead"] else 900):
         return
     x["chk"] = time.time()
     try:

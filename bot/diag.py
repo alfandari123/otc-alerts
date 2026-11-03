@@ -183,6 +183,20 @@ def xcheck():
             print(url.split("/")[2], url.rsplit("/", 1)[1], r.status_code, " ".join(body.split()))
         except Exception as e:
             print(url, "ERR", type(e).__name__)
+    import asyncio
+    from . import xfeed
+
+    async def tw():
+        api, pool = xfeed._api()
+        await pool.add_account("bot", "-", "-", "-", cookies=config.X_COOKIES)
+        u = await api.user_by_login(xfeed.SEAN)
+        print("twscrape user_by_login:", "ok, following=" + str(u.friendsCount) if u else "None")
+        from twscrape import gather
+        print("twscrape search posts:", len(await gather(api.search("from:WhalePenny OR from:PikachOTC", limit=10))))
+    try:
+        asyncio.run(tw())
+    except Exception as e:
+        print("twscrape ERR", type(e).__name__, str(e)[:150])
 
 
 def main():
