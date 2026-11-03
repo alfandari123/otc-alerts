@@ -27,5 +27,6 @@ jobs:
         env:
           SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          X_COOKIES: ${{ secrets.X_COOKIES }}
         shell: bash
         run: python -m bot.diag ${{ inputs.mode }}

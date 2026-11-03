@@ -167,6 +167,24 @@ def radar_check(sym, company):
         print("RADAR news:", n["src_label"], "|", n["title"][:100])
 
 
+def xcheck():
+    """Is the X key (X_COOKIES) usable from GitHub? Prints lengths and HTTP answers only, never the values."""
+    from twscrape.account import TOKEN
+    ck = dict(kv.strip().split("=", 1) for kv in config.X_COOKIES.split(";") if "=" in kv)
+    print("cookie names:", sorted(ck), "| lengths:", {k: len(v) for k, v in ck.items()})
+    h = {"authorization": TOKEN, "x-csrf-token": ck.get("ct0", ""), "x-twitter-active-user": "yes",
+         "x-twitter-auth-type": "OAuth2Session", "User-Agent": config.BROWSER_UA,
+         "cookie": "; ".join(f"{k}={v}" for k, v in ck.items())}
+    for url in ("https://api.x.com/1.1/account/verify_credentials.json",
+                "https://x.com/i/api/1.1/account/settings.json"):
+        try:
+            r = requests.get(url, headers=h, timeout=25)
+            body = r.text[:200] if r.status_code != 200 else ("screen_name ok: " + str(r.json().get("screen_name")))
+            print(url.split("/")[2], url.rsplit("/", 1)[1], r.status_code, " ".join(body.split()))
+        except Exception as e:
+            print(url, "ERR", type(e).__name__)
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -180,6 +198,8 @@ def main():
         return prn()
     if "dil" in sys.argv:
         return dil()
+    if "x" in sys.argv:
+        return xcheck()
     if "ai-item" in sys.argv:
         return ai_item()
     if "ai" in sys.argv:
