@@ -139,10 +139,13 @@ GROUP_TRADE_MAX_POS = 2       # at most 2 of the 5 places, so news buys keep roo
 # --- X (Twitter): posts of the accounts Sean Toizer follows (bot/xfeed.py), read through the bot's own X account ---
 X_EVERY_SEC = 180             # X search allows ~50 searches / 15 min per account: 4 searches every 3 min
 X_PER_QUERY = 20              # handles in one "from:a OR from:b" search (X caps the query length)
-X_MAX_HANDLES = 80            # more would pass the search limit; the full 987 need an X List (one read for all)
+X_MAX_HANDLES = 80            # search only covers accounts the bot does not follow yet
 X_ALERT_MIN_SCORE = 6         # AI score needed for an alert (an insider/company post or early info always alerts)
 X_TRADE_MAX_PUMP = 5          # the agent ignores posts the AI rates as hype above this
 X_AI_PER_HOUR = 30            # AI reads of posts per hour (the free Gemini quota also serves the news)
+X_HOME_OP = "GjleyyGw4xvWe5tn8EQt9w/HomeLatestTimeline"   # X web op id of the Following feed (from his Chrome, 4.11)
+X_FOLLOW_PER_DAY = 40         # the bot account follows Sean's accounts slowly (fast follows get accounts locked)
+X_FOLLOW_GAP_SEC = 1200       # at least 20-40 min between two follows
 
 # --- Housekeeping ---
 WATCHLIST_MAX = 150
