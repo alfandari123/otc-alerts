@@ -57,7 +57,7 @@ def _gql(op, variables):
 def _following():
     from twscrape.api import OP_Following, OP_UserByScreenName
     from twscrape.models import parse_users
-    m = re.search(r'"rest_id":"(\d+)"', json.dumps(_gql(OP_UserByScreenName, {"screen_name": SEAN})))
+    m = re.search(r'"rest_id":"(\d+)"', json.dumps(_gql(OP_UserByScreenName, {"screen_name": SEAN}), separators=(",", ":")))
     if not m:
         return []
     out, cursor = [], None
@@ -68,7 +68,7 @@ def _following():
         rep = _gql(OP_Following, v)
         got = [u.username for u in parse_users(rep)]
         out += [h for h in got if h not in out]
-        c = re.search(r'"value":"([^"]+)","cursorType":"Bottom"', json.dumps(rep))
+        c = re.search(r'"value":"([^"]+)","cursorType":"Bottom"', json.dumps(rep, separators=(",", ":")))
         if not got or not c:
             break
         cursor = c.group(1)
