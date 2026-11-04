@@ -18,7 +18,7 @@ Positions live in pt["atm"]["pos"] (kind "atm"); cash, fees and closed trades ar
 import time
 from datetime import datetime
 
-from . import atm, config, dilution, net, trader
+from . import atm, config, dilution, market, net, trader
 from .sources import otcm
 from .util import ET, esc, et_now, fmt_price, log
 
@@ -187,18 +187,27 @@ def _buy(run, sym, rng, price, shares, add=False):
     log("atm: bought")
 
 
-def _sell(run, sym, price, why):
+def _sell(run, sym, price, why, shares=None):
+    """Sell the position (or only `shares` of it - the rest stays as the breakout bonus)."""
     st = run.st
     pt, a = _book(st)
-    p = a["pos"].pop(sym)
+    p = a["pos"][sym]
+    part = bool(shares) and shares < p["shares"]
+    shares = shares if part else p["shares"]
+    basis = p["basis"] * shares / p["shares"]
+    if part:
+        p["basis"] -= basis
+        p["shares"] -= shares
+    else:
+        a["pos"].pop(sym)
+        a["since"][sym] = time.time()
     price = round(max(price, trader.tick(price)), 6)
-    a["since"][sym] = time.time()
-    proceeds = p["shares"] * price - config.TRADE_FEE
-    pnl = proceeds - p["basis"]
+    proceeds = shares * price - config.TRADE_FEE
+    pnl = proceeds - basis
     pt["cash"] += proceeds
     pt["fees"] += config.TRADE_FEE
-    pt["closed"].append({"sym": sym, "entry": p["entry"], "exit": price, "shares": p["shares"], "pnl": round(pnl, 2),
-                         "r": 0.0, "opened": p["opened"], "closed": time.time(), "why": "🏧 " + why, "part": False,
+    pt["closed"].append({"sym": sym, "entry": p["entry"], "exit": price, "shares": shares, "pnl": round(pnl, 2),
+                         "r": 0.0, "opened": p["opened"], "closed": time.time(), "why": "🏧 " + why, "part": part,
                          "kind": "atm"})
     pt["closed"] = pt["closed"][-300:]
     if "floor" in why or "דילול" in why:
@@ -222,6 +231,18 @@ def _dilution(st, sym, since):
     return trader._danger(st, sym, since=since)
 
 
+def _bonus_shares(st, sym, p, bars, now):
+    """Shares to keep at the ceiling for a breakout: only when today's volume is ATM_BONUS_VOL_X x the 20-day
+    average (buyers pushing into the resistance) and the bonus part is worth keeping; else 0."""
+    if not config.ATM_BONUS_PCT:
+        return 0
+    avg = market.avg_volume(sym, now.date(), st.setdefault("avgvol", {}))
+    if not avg or sum(b["v"] for b in bars) < config.ATM_BONUS_VOL_X * avg:
+        return 0
+    keep = int(p["shares"] * config.ATM_BONUS_PCT)
+    return keep if keep * _sell_px(p) >= config.ATM_MIN_TRADE else 0
+
+
 def _manage(run, sym, p, now):
     st = run.st
     bars, _ = trader.get_bars(sym)
@@ -242,14 +263,26 @@ def _manage(run, sym, p, now):
     if p["trail"]:
         p["trail"] = max(p["trail"], trader._grid(p["high"] * (1 - config.ATM_NEWS_TRAIL), p["high"], False))
         if last <= p["trail"]:
-            return _sell(run, sym, last - t if last > t else last, "חדשה הריצה את המניה מעל התקרה – העצירה הנגררת נפגעה, הרווח נשמר")
+            # the bonus stop waits at the trail price (one tick lower would turn its small profit into a loss)
+            return _sell(run, sym, last if p.get("bonus") else last - t if last > t else last,
+                         "חלק הבונוס: לא הייתה פריצה / העצירה הנגררת נפגעה – מכירת השארית" if p.get("bonus") else
+                         "חדשה הריצה את המניה מעל התקרה – העצירה הנגררת נפגעה, הרווח נשמר")
     elif mine and _filled(mine, _sell_px(p), p["shares"], "sell"):
         if fresh_news:
             p["trail"] = trader._grid(max(p["ceiling"] - t, p["high"] * (1 - config.ATM_NEWS_TRAIL)), p["ceiling"], False)
             trader._note(run, sym, "atmnews", f"🏧 <b>{sym}</b> הגיעה לתקרה, אבל יש חדשה חיובית טרייה – לא מוכר בתקרה; "
                                               f"עצירה נגררת ב-${fmt_price(p['trail'])}")
         else:
-            return _sell(run, sym, _sell_px(p), "🎯 הגיעה לתקרה – מכירה בהתנגדות")
+            keep = _bonus_shares(st, sym, p, bars, now)
+            if not keep:
+                return _sell(run, sym, _sell_px(p), "🎯 הגיעה לתקרה – מכירה בהתנגדות")
+            # his rule 4.11: breakout potential -> take most of the profit, keep a small part for a breakout
+            _sell(run, sym, _sell_px(p), f"🎯 הגיעה לתקרה בווליום כבד – מוכר את רוב המניות; "
+                                         f"{keep:,} נשארות כבונוס לפריצה", shares=p["shares"] - keep)
+            p["trail"] = trader._grid(max(_sell_px(p) - t, p["floor"] + t, p["high"] * (1 - config.ATM_NEWS_TRAIL)),
+                                      p["ceiling"], False)
+            p["bonus"] = True
+            return
     # 3) the floor broke: why?
     floor = p["floor"]
     day = str(now.date())

@@ -119,7 +119,9 @@ ATM_SELL_UNDER_TICKS = 1      # the sell waits 1 tick under the ceiling (course;
 ATM_NEWS_TRAIL = 0.25         # fresh news at the ceiling: no sale there, trailing stop 25% under the high
 ATM_ADD_ON = True             # one seller dumped under the floor (no dilution): buy once more, cheaper
 ATM_HEAVY_X = 2               # a day closing under the floor on 2x volume counts as a break day; 2 in a row = out
-ATM_MAX_DAYS = 90
+ATM_MAX_DAYS = 30             # was 90; 3.11 review: RWAX/ATDS/GPFT stuck at the floor (1y backtest held ~6 days)
+ATM_BONUS_PCT = 0.20          # his rule 4.11: at the ceiling with breakout potential keep 20% for a breakout
+ATM_BONUS_VOL_X = 2           # "breakout potential" = today's volume >= 2x the 20-day average when the ceiling fills
 ATM_COOLDOWN_DAYS = 30        # after a dilution / broken-floor exit, leave the stock alone
 ATM_SCAN_EVERY_H = 20         # the scan runs outside market hours, about once a day
 ATM_SCAN_PAGES = 20           # 20 x 50 most active OTC stocks
