@@ -211,6 +211,22 @@ def xcheck():
                 print("raw gql", name, method, "ERR", type(e).__name__)
     from . import xfeed
     try:
+        import re as _re
+        from twscrape.api import OP_Following as _OF
+        u = json.dumps(xfeed._gql(OP_UserByScreenName, {"screen_name": "SeanTwizer"}), separators=(",", ":"))
+        rid = _re.search(r'"rest_id":"(\d+)"', u)
+        print("sean rest_id found:", bool(rid), "| friends_count in user:", _re.findall(r'"friends_count":(\d+)', u)[:1])
+        if rid:
+            fs = json.dumps(xfeed._gql(_OF, {"userId": rid.group(1), "count": 100, "includePromotedContent": False}),
+                            separators=(",", ":"))
+            print("following rep len", len(fs), "user_results", fs.count('"user_results"'), "screen_name",
+                  fs.count('"screen_name"'), "types", _re.findall(r'"type":"(Timeline\w+)"', fs)[:6], "msgs",
+                  _re.findall(r'"message":"([^"]{0,80})"', fs)[:3], "top", fs[:120])
+        h = json.dumps(xfeed._gql("GjleyyGw4xvWe5tn8EQt9w/HomeLatestTimeline", {"count": 40,
+                       "includePromotedContent": False, "latestControlAvailable": True, "requestContext": "launch"}),
+                       separators=(",", ":"))
+        print("home latest len", len(h), "tweets~", h.count('"tweet_results"'), "msgs",
+              _re.findall(r'"message":"([^"]{0,80})"', h)[:3])
         f = xfeed._following()
         print("xfeed following:", len(f))
         x = {"last": 0, "uchk": time.time(), "users": f or xfeed.init({})["users"]}
