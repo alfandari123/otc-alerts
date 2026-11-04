@@ -216,7 +216,8 @@ def xcheck():
         x["followed"] = x["users"][:20]      # the 20 followed from his Chrome on 3.11
         home = xfeed._home(x)
         mine = {h.lower() for h in x["users"]}
-        print("home posts:", len(home), "| from Sean's accounts:", sum(1 for t in home.values() if t.user.username.lower() in mine))
+        print("home posts:", len(home), "| from Sean's accounts:", sum(1 for t in home.values() if t.user.username.lower() in mine),
+              "| newest age min:", round((time.time() - max(t.date.timestamp() for t in home.values())) / 60) if home else "-")
         posts = xfeed._fetch(x)
         print("xfeed posts:", len(posts), "| with cashtags:", sum(1 for t in posts if t.cashtags),
               "| newest age min:", round((time.time() - posts[-1].date.timestamp()) / 60) if posts else "-")

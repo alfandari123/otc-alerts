@@ -31,6 +31,9 @@ def init(st):
     with open(USERS_FILE, encoding="utf-8") as f:       # X shows others only ~70 of Sean's newest follows:
         have = {h.lower() for h in x["users"]}          # the file grows when we collect more from his Chrome
         x["users"] += [h for h in f.read().split() if not h.startswith("#") and h.lower() not in have]
+    if "fseed" not in x:                                 # the first 20 were followed by hand in his Chrome on 3.11
+        x["fseed"] = 1
+        x["followed"] += x["users"][:20]
     return x
 
 
