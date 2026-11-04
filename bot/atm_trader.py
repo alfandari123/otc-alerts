@@ -231,6 +231,12 @@ def _dilution(st, sym, since):
     return trader._danger(st, sym, since=since)
 
 
+def _even(p):
+    """Lowest price (on the tick grid) at which selling everything loses nothing after the sell fee."""
+    x = (p["basis"] + config.TRADE_FEE) / p["shares"]
+    return trader._grid(x, x, True)
+
+
 def _bonus_shares(st, sym, p, bars, now):
     """Shares to keep at the ceiling for a breakout: only when today's volume is ATM_BONUS_VOL_X x the 20-day
     average (buyers pushing into the resistance) and the bonus part is worth keeping; else 0."""
@@ -260,11 +266,18 @@ def _manage(run, sym, p, now):
     # 2) the ceiling (or news mode: trailing)
     news = p.get("news") or trader.init(st)["pos"].get(sym, {}).get("news")
     fresh_news = news and time.time() - news[0] < 3 * 86400
+    even = _even(p)
     if p["trail"]:
-        p["trail"] = max(p["trail"], trader._grid(p["high"] * (1 - config.ATM_NEWS_TRAIL), p["high"], False))
+        p["trail"] = max(p["trail"], even, trader._grid(p["high"] * (1 - config.ATM_NEWS_TRAIL), p["high"], False))
         if last <= p["trail"]:
+            if last < even:
+                # his rule 4.11: no sale at a loss (fees included) without dilution -> back to waiting for the ceiling
+                p["trail"], p["bonus"] = None, False
+                trader._note(run, sym, "atmeven", f"🏧 <b>{sym}</b> ירדה מתחת למחיר האיזון – לא מוכר בהפסד; "
+                                                  f"מחכה שוב לתקרה (${fmt_price(_sell_px(p))})")
+                return
             # the bonus stop waits at the trail price (one tick lower would turn its small profit into a loss)
-            return _sell(run, sym, last if p.get("bonus") else last - t if last > t else last,
+            return _sell(run, sym, max(even, last if p.get("bonus") else last - t),
                          "חלק הבונוס: לא הייתה פריצה / העצירה הנגררת נפגעה – מכירת השארית" if p.get("bonus") else
                          "חדשה הריצה את המניה מעל התקרה – העצירה הנגררת נפגעה, הרווח נשמר")
     elif mine and _filled(mine, _sell_px(p), p["shares"], "sell"):
@@ -308,8 +321,10 @@ def _manage(run, sym, p, now):
             if len(p["break_days"]) >= 2:
                 return _sell(run, sym, last - t if last > t else last,
                              "הרצפה נשברת שוב ושוב בווליום כבד – כנראה מדלל שמוכר; יציאה")
-    if time.time() - p["opened"] > config.ATM_MAX_DAYS * 86400:
-        return _sell(run, sym, last - t if last > t else last, f"מוחזקת יותר מ-{config.ATM_MAX_DAYS} יום בלי שהגיעה לתקרה")
+    if time.time() - p["opened"] > config.ATM_MAX_DAYS * 86400 and last - t >= even:
+        # time limit only frees the money when it costs nothing: never a loss (fees included) without dilution
+        return _sell(run, sym, last - t, f"מוחזקת יותר מ-{config.ATM_MAX_DAYS} יום בלי שהגיעה לתקרה – "
+                                         "יוצא בלי הפסד ומשחרר את הכסף")
 
 
 def _entries(run, now):
