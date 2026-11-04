@@ -583,8 +583,10 @@ def _rotate(run, c):
         return False
     _, sym = min(still)
     p = pt["pos"][sym]
-    _sell(run, sym, p["shares"], sell_price(sym, p["last"]),
-          f"מפנה מקום: המניה עומדת {_days(p['opened']):.0f} ימים, ויש הזדמנות חזקה יותר")
+    sell = sell_price(sym, p["last"])
+    if sell < _even(p) - 1e-9:      # a rotation is never worth a loss (his rule 4.11)
+        return False
+    _sell(run, sym, p["shares"], sell, f"מפנה מקום: המניה עומדת {_days(p['opened']):.0f} ימים, ויש הזדמנות חזקה יותר")
     return True
 
 
@@ -594,9 +596,22 @@ def _word():
     return "אמיתית" if live() else "וירטואלית"
 
 
-def _sell(run, sym, shares, fill, reason):
+def _even(p):
+    """Lowest fill at which selling loses nothing after the sell fee."""
+    x = (p["basis"] + config.TRADE_FEE) / p["shares"]
+    return _grid(x, x, True)
+
+
+def _sell(run, sym, shares, fill, reason, loss_ok=False):
     """Sell `shares` (all or part) at about `fill`. Returns True when the position is closed now.
+    His rule 4.11: never at a loss (fees included) unless dilution is suspected (loss_ok) - the stock is held instead.
     Real money: a limit order is sent and the sale is booked when Schwab reports the fill."""
+    p = init(run.st)["pos"][sym]
+    if not loss_ok and fill < _even(p) - 1e-9:
+        _note(run, sym, "noloss", f"⏸️ <b>{sym}</b>: {esc(reason)} – אבל מכירה עכשיו (${fmt_price(fill)}) היא בהפסד, "
+                                  f"ואין חשש לדילול. לפי הכלל שלך לא מוכר בהפסד – מחזיק. יוצא רק במחיר איזון "
+                                  f"${fmt_price(_even(p))} ומעלה, או מיד אם יופיע דילול.")
+        return False
     if live():
         _live_sell(run, sym, shares, fill, reason)
         return False
@@ -780,8 +795,9 @@ def _heavy_selling(run, sym, p, bars, sell):
     if last < p["ref"]:
         reasons.append(f"המחיר ירד מתחת למחיר שלפני {_before(p)} – {_before(p).split()[0]} 'נמחקה'")
     if reasons:
-        _sell(run, sym, p["shares"], sell, "🔴 מכירה כבדה – נורה אדומה: " + "; ".join(reasons))
-        return True
+        # a loss is allowed only when a reason points at dilution (not just "the price fell under the pre-news level")
+        diluting = bool(danger or wall or wall2 or (dil_mm and dil_mm[2]))
+        return _sell(run, sym, p["shares"], sell, "🔴 מכירה כבדה – נורה אדומה: " + "; ".join(reasons), loss_ok=diluting) or live()
     _note(run, sym, "dump", f"ℹ️ <b>{sym}</b>: מכירה כבדה (ירידה של {drop * 100:.0f}%), אבל אין דילול, "
                             f"אין חדשה רעה ואין מוכר שיושב על מחיר – נראה כמו מימוש רווחים. "
                             f"נשאר בפנים, העצירה ב-${fmt_price(p['stop'])}.")
@@ -811,8 +827,9 @@ def _manage(run, sym, p):
                 why = "עצירה נגררת – נועל רווח" if p["stop"] > p["entry"] else "הגיע לנקודת העצירה"
             if b["o"] < p["stop"]:
                 why += " (המחיר קפץ מתחת לעצירה)"
-            _sell(run, sym, p["shares"], fill, why)
-            return
+            if _sell(run, sym, p["shares"], fill, why) or live():
+                return
+            continue    # a stop under break-even is not sold (his rule): keep holding
         if not p["runner"] and b["h"] >= p["target"] + t:
             p["last"], p["last_t"] = b["c"], b["t"]
             if _at_target(run, sym, p, [x for x in bars if x["t"] <= b["t"]]):
@@ -831,11 +848,11 @@ def _manage(run, sym, p):
     # dilution or bad news after we bought -> out at once
     if init(st)["dil"].get(sym, 0) > p["opened"]:
         why = init(st)["dilw"].get(sym, "")
-        _sell(run, sym, p["shares"], sell, "🔴 זוהה דילול – יציאה מיידית" + (f": {why}" if why else ""))
+        _sell(run, sym, p["shares"], sell, "🔴 זוהה דילול – יציאה מיידית" + (f": {why}" if why else ""), loss_ok=True)
         return
     neg = init(st)["neg"].get(sym)
     if neg and neg[0] > p["opened"]:
-        _sell(run, sym, p["shares"], sell, f"🔴 חדשה שלילית ({neg[1]}) – יציאה מיידית")
+        _sell(run, sym, p["shares"], sell, f"🔴 חדשה שלילית ({neg[1]}) – יציאה מיידית", loss_ok=True)
         return
     if time.time() - p.get("tso_chk", 0) > config.TRADE_TSO_CHECK_MIN * 60:
         p["tso_chk"] = time.time()
@@ -843,7 +860,7 @@ def _manage(run, sym, p):
         d = dilution.summary(sym, st, str(now.date()))
         if d and p.get("tso0") and d["tso"] > p["tso0"] * (1 + config.DILUTION_ALERT_MIN):
             _sell(run, sym, p["shares"], sell, f"🔴 נוספו מניות ({dilution.fmt(p['tso0'])} → "
-                                               f"{dilution.fmt(d['tso'])}) – מדלל פעיל, יציאה מיידית")
+                                               f"{dilution.fmt(d['tso'])}) – מדלל פעיל, יציאה מיידית", loss_ok=True)
             return
     # Level 2: a hole in the buyers right under our stop -> when in profit, lift the stop onto the last solid level
     bk = book(sym)
