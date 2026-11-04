@@ -39,6 +39,7 @@ DILUTION_WARN_6M = 0.25       # ... or 25%+ in 6 months
 AUTH_USED_WARN = 0.85         # warn when 85%+ of the authorized shares are already issued
 DILUTION_ALERT_MIN = 0.005    # watchlist alert when outstanding/authorized shares change by 0.5%+
 DILUTION_WATCH_EVERY_MIN = 180
+DEMOTION_SHOW_DAYS = 30        # alerts get an Expert Market line when the 180-day report window ends this soon
 
 # --- Paper trading agent (virtual money, bot/trader.py) ---
 TRADE_ON = True

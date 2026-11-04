@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, atm_trader, config, deal, dilution, group, inbox, market, radar, rules, schwab, state, telegram, trader, xfeed
+from . import ai, atm_trader, config, deal, demotion, dilution, group, inbox, market, radar, rules, schwab, state, telegram, trader, xfeed
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -29,6 +29,7 @@ HELP = """🤖 <b>בוט התראות OTC</b>
 /add ABCD EFGH – הוספת מניות לרשימה שלך
 /remove ABCD – הסרת מניה מהרשימה
 /list – הרשימה שלך
+/expert – כמה ימים נשארו לכל מניה עד סכנת Expert Market
 /status – מצב הבוט והמקורות
 /test – הודעת ניסיון
 /portfolio – התיק הווירטואלי של סוכן המסחר
@@ -151,6 +152,8 @@ def command(st, text):
         return list_text(st)
     if cmd in ("/status", "status", "מצב", "סטטוס"):
         return status_text(st)
+    if cmd in ("/expert", "expert", "דוחות"):
+        return demotion_text(st)
     if cmd in ("/portfolio", "/pf", "portfolio", "תיק"):
         return trader.portfolio_text(st)
     if cmd in ("/trades", "trades", "עסקאות"):
@@ -323,6 +326,11 @@ def _dil(st, syms):
     return dilution.summary(syms[0], st, str(et_now().date())) if syms else None
 
 
+def _demo(st, syms):
+    """Expert Market warning lines (only when the 180-day report window is close or a late notice was filed)."""
+    return demotion.lines(demotion.info(syms[0], st, et_now().date())) if syms else []
+
+
 def evaluate(run, it):
     """Returns the alert text, or None when the item is not worth an alert."""
     st = run.st
@@ -357,7 +365,7 @@ def evaluate(run, it):
             if rule["pol"] > 0 and rule["ps"] >= 3 and syms:
                 agent = (trader.on_news(st, syms[0], rules.fallback_score(rule), rule["label"], it, price)
                          if band == "in" else trader.skip_text(band))
-            return action_message(it, rule, syms, price, bool(hit), _dil(st, syms), agent)
+            return action_message(it, rule, syms, price, bool(hit), _dil(st, syms), agent, _demo(st, syms))
         return None
 
     res = None
@@ -399,7 +407,8 @@ def evaluate(run, it):
             agent = trader.on_news(st, syms[0], score, res["category_he"] or rule["label"], it, price)
         else:
             agent = trader.skip_text(band, ai=bool(res))
-    return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms), agent)
+    return alert_message(it, rule, res, syms, price, bool(hit), sentiment, score, _dil(st, syms), agent,
+                         _demo(st, syms))
 
 
 def _head(icon, sym, price, hit):
@@ -419,7 +428,7 @@ def _links(it, sym):
     return f"📄 {esc(it['src_label'])} · {links}"
 
 
-def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None, agent=""):
+def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None, agent="", demo=()):
     sym = syms[0] if syms else ""
     lines = [_head(ICON[sentiment], sym, price, hit)]
     if hit and sentiment == "negative":
@@ -440,6 +449,7 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None, a
         lines.append("⚠️ " + esc(res["risk_he"]))
     lines += deal.lines(it.get("deal"), (dil or {}).get("tso"))
     lines += dilution.lines(dil)
+    lines += demo
     lines += market.liquidity_lines(*syms[:2])
     lines.append(_links(it, sym))
     if not res:
@@ -449,7 +459,7 @@ def alert_message(it, rule, res, syms, price, hit, sentiment, score, dil=None, a
     return "\n".join(lines)
 
 
-def action_message(it, rule, syms, price, hit, dil=None, agent=""):
+def action_message(it, rule, syms, price, hit, dil=None, agent="", demo=()):
     """Fixed-format message for FINRA / OTC Markets events."""
     pol = rule["pol"]
     sym = syms[0] if syms else ""
@@ -462,6 +472,7 @@ def action_message(it, rule, syms, price, hit, dil=None, agent=""):
     if it.get("text"):
         lines.append(esc(it["text"]))
     lines += dilution.lines(dil)
+    lines += demo
     lines += market.liquidity_lines(*syms[:2])
     lines.append(_links(it, sym))
     if agent:
@@ -624,6 +635,42 @@ def dilution_check(run, force=False):
                    f'<a href="https://www.otcmarkets.com/stock/{sym}/security">OTC Markets – מבנה המניות</a>')
 
 
+# ---------- Expert Market risk (watchlist) ----------
+
+def demotion_check(run, force=False):
+    """Once a day: warn when a watchlist stock gets close to losing its quote for stale SEC reports."""
+    st = run.st
+    today = et_now().date()
+    if not st["watch"] or (not force and st.get("demo_day") == str(today)):
+        return
+    st["demo_day"] = str(today)
+    for sym, d in demotion.watch(st, today):
+        run.notify(f"⏳ <b>{sym}</b> · ⭐ ברשימה שלך\n<b>סכנת ירידה ל-Expert Market</b>\n"
+                   + "\n".join(demotion.lines(d, always=True))
+                   + f'\n<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={sym}'
+                   '&type=10-&dateb=&owner=include&count=40">הדוחות ב-SEC</a>')
+
+
+def demotion_text(st):
+    """/expert: days left for every watchlist stock."""
+    if not st["watch"]:
+        return list_text(st)
+    today = et_now().date()
+    rows, unknown = [], []
+    for sym in st["watch"]:
+        d = demotion.info(sym, st, today)
+        if d:
+            rows.append((d["days"], f"{'🚫' if d['days'] < 0 else '⚠️' if d['days'] <= config.DEMOTION_SHOW_DAYS else '✅'} "
+                                    f"<b>{sym}</b> – {d['days']} ימים" + (" · הודיעה על איחור" if d["late"] else "")))
+        else:
+            unknown.append(sym)
+    out = ["⏳ <b>ימים עד סכנת Expert Market</b> (180 יום מסוף התקופה של הדוח האחרון ל-SEC)"]
+    out += [r for _, r in sorted(rows)]
+    if unknown:
+        out.append("\nלא נבדקו (לא מדווחות ל-SEC): " + " · ".join(sorted(unknown)))
+    return "\n".join(out)
+
+
 # ---------- Main ----------
 
 def main():
@@ -679,6 +726,10 @@ def cycle(st, args):
         volume_check(run, force=args.force_vol)
         market_volume_check(run, force=args.force_vol)
         dilution_check(run, force=args.force_vol)
+        try:
+            demotion_check(run, force=args.force_vol)
+        except Exception as e:
+            log(f"expert check failed: {short_err(e)}")
         try:
             schwab_check(run)
         except Exception as e:
