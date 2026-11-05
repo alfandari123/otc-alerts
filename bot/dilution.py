@@ -77,7 +77,14 @@ def _from_sec(sym):
         return None
 
     auth = sec.shares_series(cik, "us-gaap", "CommonStockSharesAuthorized")
-    return {"tso": last, "auth": auth[-1][1] if auth else None, "date": last_date,
+    auth6 = None    # course: a jump in AUTHORIZED shares = dilution on the way (FUNR 10B -> 200B ended its range)
+    if auth and auth[-1][1]:
+        a_end = date.fromisoformat(auth[-1][0])
+        older = [v for d, v in auth if (a_end - timedelta(days=400)).isoformat() <= d
+                 <= (a_end - timedelta(days=150)).isoformat() and v]
+        if older and a_end >= end - timedelta(days=200):
+            auth6 = auth[-1][1] / older[-1] - 1
+    return {"tso": last, "auth": auth[-1][1] if auth else None, "date": last_date, "auth6": auth6,
             "chg3": change(3), "chg6": change(6), "chg12": change(12), "src": "SEC"}
 
 
@@ -130,6 +137,8 @@ def lines(d):
             out.append(("⚠️ דילול: " if warn else "דילול: ") + text)
     if d.get("auth") and d["tso"] / d["auth"] >= config.AUTH_USED_WARN:
         out.append(f"⚠️ ניצלה {d['tso'] / d['auth'] * 100:.0f}% מהמניות המורשות – ייתכן שתבקש להגדיל אותן")
+    if (d.get("auth6") or 0) >= config.TRADE_AUTH_JUMP:
+        out.append(f"⚠️ המניות המורשות הוגדלו ב-{d['auth6'] * 100:.0f}% (בערך חצי שנה) – לפי הקורס דילול בדרך")
     return out
 
 
@@ -140,6 +149,8 @@ def ai_text(d):
     parts = [f"{d['tso']:,} shares outstanding (as of {d.get('date')})"]
     if d.get("auth"):
         parts.append(f"{d['auth']:,} authorized")
+    if d.get("auth6") is not None:
+        parts.append(f"authorized shares change over ~6 months: {d['auth6'] * 100:+.0f}%")
     for k, label in (("chg3", "3 months"), ("chg6", "6 months"), ("chg12", "12 months")):
         if d.get(k) is not None:
             parts.append(f"change over {label}: {d[k] * 100:+.0f}%")

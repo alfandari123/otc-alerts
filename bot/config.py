@@ -45,6 +45,18 @@ DEMOTION_SHOW_DAYS = 30        # alerts get an Expert Market line when the 180-d
 TRADE_ON = True
 TRADE_START_CASH = 5000.0
 TRADE_FEE = 6.95              # Schwab online commission per OTC (non-NMS) order, per its April 2026 pricing guide
+# FINRA Trading Activity Fee on every SALE (2026: $0.000195/share, max $9.79; none when the price is under the
+# per-share rate, i.e. trips at $0.0001). Course group: "Schwab ~$7 a side plus a FINRA fee on the sale".
+FINRA_TAF_PER_SHARE = 0.000195
+FINRA_TAF_MAX = 9.79
+
+
+def sell_fee(shares, price):
+    """Commission + FINRA fee for one sale."""
+    taf = 0.0 if price < FINRA_TAF_PER_SHARE else min(FINRA_TAF_MAX, shares * FINRA_TAF_PER_SHARE)
+    return round(TRADE_FEE + taf, 2)
+
+
 TRADE_POSITION_PCT = 0.05     # default size = 5% of the portfolio ...
 TRADE_SIZE_BY_SCORE = {7: 0.05, 8: 0.07, 9: 0.10, 10: 0.10}   # ... stronger news = bigger
 TRADE_TRIPS_FACTOR = 0.6      # trips ($0.000X): one tick is 10-100%, so smaller
@@ -66,7 +78,15 @@ TRADE_L2_RISK_X = 1.3         # the stop would really fill 30%+ worse than plann
 TRADE_L2_NEAR = 0.15          # buyers within 15% under the stop count as "near the stop"
 # Market makers that usually dilute (course table "טבלת עושי שוק", Sean Toizer): first on the sellers' side =
 # active dilution -> no buy; further up the asks = dilution exists but is not active now -> half size.
-MM_DILUTERS = {"MAXM", "GLED", "CFGN", "PAUL", "JANE", "BBAR", "BLAS", "ALPS", "STXG", "AEXG"}
+MM_DILUTERS = {"MAXM", "GLED", "CFGN", "PAUL", "JANE", "BBAR", "BLAS", "ALPS", "STXG", "AEXG", "VNDM", "VFIN"}
+# "Both ways" MMs (course) that the group saw diluting most in practice (CDEL, OTCN: HALB, RDAR, VHAI...):
+# assume dilution until proven otherwise -> first on the ask = half size (like a diluter further up)
+MM_SUSPECT = {"CDEL", "OTCN"}
+# Ticker suffixes (5-letter tickers): Q bankruptcy, D fresh reverse split, F foreign (Schwab often ~$50 a trade),
+# Y ADR. The course avoids all 5-letter tickers (fees, liquidity) -> the agent does not buy them.
+TICKER_SUFFIX = {"Q": "פשיטת רגל (סיומת Q)", "D": "ספליט הפוך טרי (סיומת D)",
+                 "F": "מניה זרה (סיומת F) – עמלה של עד ~50$ לעסקה", "Y": "ADR (סיומת Y) – עמלות משתנות"}
+TRADE_AUTH_JUMP = 0.20        # authorized shares up 20%+ in ~6 months = more dilution coming (course: FUNR 10B->200B)
 TRADE_L2_DILUTER_LEVELS = 3   # sellers' price levels checked for a known diluter
 TRADE_MAX_CHASE = 0.60        # do not buy after the stock already rose 60%+ from the pre-news price
 TRADE_MAX_OFF_LOW = 2.0       # ... nor when the pre-news price is already 2x its 20-day low (course: no buy after

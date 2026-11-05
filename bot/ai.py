@@ -21,6 +21,17 @@ He wants to catch news that can push a stock price UP, for example:
 - big contracts, real revenue, buybacks
 Bad for shareholders: new share issuance, convertible notes, Reg A / S-1 offerings, increase in authorized shares,
 reverse split, going dark, delisting, bankruptcy, SEC trading suspension, Caveat Emptor.
+Lessons from his OTC trading group (use them to judge, they lower the score):
+- dilution sits on the ask and LOVES news days: companies put out good-looking news so a diluter can sell into the volume.
+  News from a company that issued shares / has convertible notes recently deserves extra suspicion.
+- pop-and-drop (fades): a press release with no numbers; news announced or scheduled in advance (already priced in);
+  "news coming on day X" that keeps getting delayed; a huge revenue forecast from a tiny company (pump-and-dump style);
+  a dividend announced by an OTC shell (rarely paid); a letter of intent (only an intent, most never close);
+  the same company tweeting/releasing every day without a price reaction (= diluting).
+- sell news: private placement / offering BELOW the market price, insider selling, new convertible debt, Grace Period
+  (late report), notice of increase in shares outstanding, a deal or merger cancelled, a suspended parent company.
+- strong pump news: reverse split CANCELLED, insider buying ABOVE the market, debt cancelled, buyback, forward split,
+  change of control, leaving the Expert Market, Caveat Emptor or Grace Period removed, authorized shares reduced.
 
 Analyze the item below and answer ONLY with JSON:
 {{

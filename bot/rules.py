@@ -93,6 +93,11 @@ KEYWORDS = [
      r"name change|symbol change|new (ticker|trading symbol|symbol)|ticker (symbol )?change"),
     (+1, 1, "הנהלה חדשה", r"(appoint\w*|names|new)\b.{0,20}\b(CEO|chief executive|president)"),
     (-1, 2, "ספליט הפוך", r"reverse (stock )?split"),
+    # course: a CANCELLED reverse split is pump news (strength 3 beats the -2 above)
+    (+1, 3, "ביטול ספליט הפוך",
+     r"(cancel\w*|abandon\w*|withdr[ae]w\w*|terminat\w*|rescind\w*|not (to )?(proceed|effect))\b.{0,50}\breverse (stock )?split"
+     r"|reverse (stock )?split\b.{0,50}\b(cancel+ed|abandoned|withdrawn|terminated|rescinded)"),
+    (-1, 2, "Grace Period (דוח באיחור)", r"grace period|late filing|NT 10-[KQ]|notification of late filing"),
     (-1, 2, "הגדלת מניות מורשות", r"increase\w*\b.{0,40}\bauthori[sz]ed"),
     (-1, 2, "גיוס / דילול",
      r"convertible (note|debenture|preferred)|regulation a\b|\breg a\b|offering circular|private placement"

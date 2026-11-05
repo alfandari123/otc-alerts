@@ -174,11 +174,15 @@ def diluter_ask(bk):
         for m in x["mm"]:
             if (m.get("id") or "").upper() in config.MM_DILUTERS:
                 return m["id"].upper(), x["price"], i == 0
+    for m in asks[0]["mm"] if asks else []:     # CDEL / OTCN first on the ask: suspect -> half size, not a block
+        if (m.get("id") or "").upper() in config.MM_SUSPECT:
+            return m["id"].upper(), asks[0]["price"], False
     return None
 
 
 def diluter_text(d):
-    return f"{d[0]} (עושה שוק שמדלל בדרך כלל) {'ראשון' if d[2] else 'יושב'} בצד המוכרים ב-${fmt_price(d[1])}"
+    kind = "חשוד כמדלל" if d[0] in config.MM_SUSPECT else "עושה שוק שמדלל בדרך כלל"
+    return f"{d[0]} ({kind}) {'ראשון' if d[2] or d[0] in config.MM_SUSPECT else 'יושב'} בצד המוכרים ב-${fmt_price(d[1])}"
 
 
 def any_diluter(bk):
@@ -356,7 +360,17 @@ def _danger(st, sym, since=None):
             return f"מדלל פעיל: מספר המניות עלה ב-{d['chg6'] * 100:.0f}% בחצי שנה"
         if d.get("auth") and d["tso"] / d["auth"] >= config.TRADE_AUTH_USED_MAX:
             return f"ניצלה {d['tso'] / d['auth'] * 100:.0f}% מהמניות המורשות – צפויה הגדלה ודילול"
+        if (d.get("auth6") or 0) >= config.TRADE_AUTH_JUMP:
+            return f"המניות המורשות הוגדלו ב-{d['auth6'] * 100:.0f}% בחצי שנה – דילול בדרך"
     return ""
+
+
+def suffix_block(sym):
+    """Hebrew reason when the ticker is one the course does not trade (5 letters: Q / D / F / Y ...), else ''."""
+    sym = (sym or "").upper()
+    if len(sym) != 5:
+        return ""
+    return config.TICKER_SUFFIX.get(sym[-1], "טיקר של 5 אותיות (הקורס נמנע: עמלות ונזילות)")
 
 
 def _seller_wall(bars):
@@ -439,9 +453,9 @@ def _size_pct(score, price, group=False):
 
 
 def _target(entry, risk, shares, p):
-    """Lowest target that still pays 3x the risk after fees: gain - 2 fees >= 3 x (loss + 2 fees)."""
-    fee = config.TRADE_FEE
-    need = config.TRADE_RR * risk + (2 * fee * (1 + config.TRADE_RR)) / shares
+    """Lowest target that still pays 3x the risk after fees: gain - fees >= 3 x (loss + fees)."""
+    fees = config.TRADE_FEE + config.sell_fee(shares, entry)
+    need = config.TRADE_RR * risk + (fees * (1 + config.TRADE_RR)) / shares
     return _grid(entry + need, p, True)
 
 
@@ -454,7 +468,7 @@ def _buy(run, sym, c):
     if len(bars) < config.TRADE_CONFIRM_BARS:
         c["why"] = "אין מספיק מסחר היום"
         return False
-    why = _danger(st, sym)
+    why = suffix_block(sym) or _danger(st, sym)
     if why:
         c["why"], c["drop"] = why, True
         return False
@@ -555,8 +569,8 @@ def _open(run, sym, shares, entry, info):
     plan = {"stop": info["stop"], "ref": info["ref"]}
     gain = (target / entry - 1) * 100
     loss = risk / entry * 100
-    net_gain = shares * (target - entry) - 2 * config.TRADE_FEE
-    net_loss = shares * risk + 2 * config.TRADE_FEE
+    net_gain = shares * (target - entry) - config.TRADE_FEE - config.sell_fee(shares, target)
+    net_loss = shares * risk + config.TRADE_FEE + config.sell_fee(shares, entry - risk)
     run.notify(f"🛒 <b>קנייה {_word()}: {sym}</b> ({price_class(entry)})\n"
                f"{esc(c['cat'])}" + (f" · ציון {c['score']}/10" if c["score"] else "") + "\n"
                f"{shares:,} מניות × ${fmt_price(entry)} = ${cost:,.0f} ({cost / equity(pt) * 100:.0f}% מהתיק)\n"
@@ -598,7 +612,7 @@ def _word():
 
 def _even(p):
     """Lowest fill at which selling loses nothing after the sell fee."""
-    x = (p["basis"] + config.TRADE_FEE) / p["shares"]
+    x = (p["basis"] + config.sell_fee(p["shares"], p["entry"])) / p["shares"]
     return _grid(x, x, True)
 
 
@@ -624,7 +638,7 @@ def _book(run, sym, shares, fill, reason, fee=True):
     shares = min(shares, p["shares"])
     fill = max(fill, tick(fill))
     basis = p["basis"] * shares / p["shares"]
-    cost = config.TRADE_FEE if fee else 0.0
+    cost = config.sell_fee(shares, fill) if fee else 0.0
     proceeds = shares * fill - cost
     pnl = proceeds - basis
     pt["cash"] += proceeds
@@ -965,7 +979,7 @@ def recover_price(p):
     part = int(p["shares"] * config.TRADE_TAKE_PART)
     if part <= 0:
         return None
-    return _grid((p["basis"] + config.TRADE_FEE) / part, p["entry"], True)
+    return _grid((p["basis"] + config.sell_fee(part, p["entry"])) / part, p["entry"], True)
 
 
 def _open_review(run):

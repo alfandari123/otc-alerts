@@ -177,7 +177,7 @@ def _buy(run, sym, rng, price, shares, add=False):
                      "high": price, "basis": cost + config.TRADE_FEE,
                      "opened": time.time(), "break_days": [], "added": False, "trail": None, "good": bool(rng.get("good"))}
     sell = a["pos"][sym]["sell"]
-    gain = shares * (sell - price) - 2 * config.TRADE_FEE
+    gain = shares * (sell - price) - config.TRADE_FEE - config.sell_fee(shares, sell)
     run.notify(f"🏧 <b>כספומט{' טוב ⭐' if rng.get('good') else ''} – קנייה וירטואלית: {sym}</b>\n"
                f"{shares:,} מניות × ${fmt_price(price)} = ${cost:,.0f} (ברצפה)\n"
                f"פקודת מכירה מחכה ב-${fmt_price(sell)}"
@@ -202,10 +202,11 @@ def _sell(run, sym, price, why, shares=None):
         a["pos"].pop(sym)
         a["since"][sym] = time.time()
     price = round(max(price, trader.tick(price)), 6)
-    proceeds = shares * price - config.TRADE_FEE
+    fee = config.sell_fee(shares, price)
+    proceeds = shares * price - fee
     pnl = proceeds - basis
     pt["cash"] += proceeds
-    pt["fees"] += config.TRADE_FEE
+    pt["fees"] += fee
     pt["closed"].append({"sym": sym, "entry": p["entry"], "exit": price, "shares": shares, "pnl": round(pnl, 2),
                          "r": 0.0, "opened": p["opened"], "closed": time.time(), "why": "🏧 " + why, "part": part,
                          "kind": "atm"})
@@ -233,7 +234,7 @@ def _dilution(st, sym, since):
 
 def _even(p):
     """Lowest price (on the tick grid) at which selling everything loses nothing after the sell fee."""
-    x = (p["basis"] + config.TRADE_FEE) / p["shares"]
+    x = (p["basis"] + config.sell_fee(p["shares"], p["entry"])) / p["shares"]
     return trader._grid(x, x, True)
 
 
@@ -343,13 +344,14 @@ def _entries(run, now):
             continue                                  # the price did not come down to the floor (since our order)
         if bars[-1]["c"] < rng["floor"] - 1e-9:
             continue                                  # it is under the floor right now: wait, do not catch a fall
-        if trader._danger(st, sym):
+        if trader.suffix_block(sym) or trader._danger(st, sym):
             continue
         budget = _budget(st, rng)
         shares = int(budget / rng["floor"])
         if shares * rng["floor"] < config.ATM_MIN_TRADE:
             continue
-        if shares * (sell_level(rng["floor"], rng["ceiling"]) - rng["floor"]) - 2 * config.TRADE_FEE < config.ATM_MIN_GAIN:
+        sell = sell_level(rng["floor"], rng["ceiling"])
+        if shares * (sell - rng["floor"]) - config.TRADE_FEE - config.sell_fee(shares, sell) < config.ATM_MIN_GAIN:
             continue                                  # not worth it after the fees
         if not _filled(bars, rng["floor"], shares, "buy"):
             continue
