@@ -124,6 +124,27 @@ def analyze_tweet(t):
     return _ask(prompt, _parse_tweet)
 
 
+def title_he(title):
+    """A news headline in simple Hebrew (bot/radar.py); None when the AI is unavailable."""
+    if not usable():
+        return None
+    prompt = ("Translate this stock-news headline into short, simple Hebrew for a trader. Keep company names, "
+              "tickers and numbers as they are. Answer ONLY with JSON: {\"he\": \"...\"}\n\nHeadline: " + title[:300])
+    return _ask(prompt, _parse_he)
+
+
+def _parse_he(r):
+    try:
+        parts = r.json()["candidates"][0]["content"]["parts"]
+        text = re.sub(r"^```(?:json)?|```$", "", "".join(p.get("text", "") for p in parts).strip()).strip()
+        d = json.loads(text)
+        if isinstance(d, list):
+            d = d[0]
+        return str(d["he"]).strip()[:300] or None
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+
+
 def _ask(prompt, parse):
     global calls, last_error, _model, _auth_failed
     body = {

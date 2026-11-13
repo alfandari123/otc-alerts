@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
-from . import config, net, rules, trader
+from . import ai, config, net, rules, trader
 from .sources import sec
 from .util import esc, log
 
@@ -25,6 +25,23 @@ SUBMISSIONS = "https://data.sec.gov/submissions/CIK{:010d}.json"
 FRESH_DAYS = 3
 
 ITEM = re.compile(r"<item>(.*?)</item>", re.S)
+SUFFIX = r"(?:inc|corp|corporation|co|ltd|plc|holdings?|group|company|international|technologies|enterprises)"
+
+
+def about(sym, company, title, source=""):
+    """Is this Google News headline really about the stock? A search for a ticker that is also a name brings other
+    things (13.11: HIRU brought every article of the Sri Lankan site "Hiru News", a game and a person named Hiru).
+    Yes when the ticker is written as a ticker ($ABCD, (ABCD), OTC: ABCD) or the company's name is in the headline -
+    a short one-word name only together with its Inc/Corp word. The " - Source" ending is not part of the headline."""
+    t = title[:-len(source) - 3] if source and title.endswith(" - " + source) else title
+    if re.search(rf"(?:\$|\(|OTC\w*\s*:\s*){re.escape(sym)}(?![A-Za-z])", t):
+        return True
+    base = re.sub(rf"(?:[,.]?\s+{SUFFIX}\.?)+$", "", company or "", flags=re.I).strip()
+    if len(base) < 3:
+        return False
+    if len(base.split()) >= 2 or len(base) >= 8:
+        return base.lower() in t.lower()
+    return bool(re.search(rf"\b{re.escape(base)},?\s+{SUFFIX}\b", t, re.I))
 
 
 def _tag(block, name):
@@ -114,13 +131,16 @@ def scan(run):
             seen.append(it["id"])
             if first:
                 continue
+            if it["src"] == "PRN" and not about(sym, p.get("company", ""), it["title"], it["src_label"]):
+                continue                 # another "Hiru": not this stock - not news for him or for the agent
             rule = rules.classify(it)
             trader.on_item(st, it, rule)
             dil = set(rule["labels"]) & trader.DIL_LABELS
             good = rule["pol"] > 0 and rule["ps"] >= 2
             if not (dil or rule["pol"] < 0 or good):
                 continue                 # his request 13.11: ordinary articles flooded him - the agent still saw it
-            lines = [f"📡 <b>רדאר – {sym}</b> (מניה שהסוכן מחזיק)", esc(it["title"]),
+            he = ai.title_he(it["title"]) if it["src"] == "PRN" else None      # his request: Hebrew, not English
+            lines = [f"📡 <b>רדאר – {sym}</b> (מניה שהסוכן מחזיק)", esc(he or it["title"]),
                      f"{esc(it['src_label'])} · <a href=\"{html.escape(it['url'])}\">למקור</a>"]
             if dil:
                 lines.append("🔴 נראה כמו דילול: " + esc(" · ".join(dil)) + " – הסוכן יוצא מהמניה")
