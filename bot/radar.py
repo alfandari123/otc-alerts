@@ -4,7 +4,8 @@ Every RADAR_EVERY_MIN minutes, for each open position:
 - Google News search for the ticker and the company name (sites, blogs and wires the bot does not read directly);
 - SEC filings by the company's SEC number, also when the SEC has no ticker for it (SPYR filed Form 15 in 2023,
   so its new filings would not carry a ticker and the main SEC feed could not link them).
-Anything new is sent to Telegram; dilution or bad news sets the agent's flags, and the agent sells at once.
+Dilution or bad news sets the agent's flags, and the agent sells at once. Telegram gets only what matters
+(dilution, bad news, or a clearly positive event) - ordinary articles are seen by the agent but not sent (13.11).
 The first scan of a stock only remembers what already exists (old news is not news).
 """
 import html
@@ -116,14 +117,17 @@ def scan(run):
             rule = rules.classify(it)
             trader.on_item(st, it, rule)
             dil = set(rule["labels"]) & trader.DIL_LABELS
+            good = rule["pol"] > 0 and rule["ps"] >= 2
+            if not (dil or rule["pol"] < 0 or good):
+                continue                 # his request 13.11: ordinary articles flooded him - the agent still saw it
             lines = [f"📡 <b>רדאר – {sym}</b> (מניה שהסוכן מחזיק)", esc(it["title"]),
                      f"{esc(it['src_label'])} · <a href=\"{html.escape(it['url'])}\">למקור</a>"]
             if dil:
                 lines.append("🔴 נראה כמו דילול: " + esc(" · ".join(dil)) + " – הסוכן יוצא מהמניה")
             elif rule["pol"] < 0:
                 lines.append("🔴 חדשה שלילית: " + esc(rule["label"]) + " – הסוכן יוצא מהמניה")
-            elif rule["labels"]:
-                lines.append("זוהה: " + esc(" · ".join(rule["labels"][:3])))
+            else:
+                lines.append("🟢 חדשה חיובית: " + esc(" · ".join(rule["labels"][:3])))
             run.notify("\n".join(lines))
         rd["seen"][sym] = seen[-300:]
     log(f"radar: {len(held)} positions checked")

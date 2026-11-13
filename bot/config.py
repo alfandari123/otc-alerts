@@ -167,6 +167,9 @@ X_ALERT_MIN_SCORE = 6         # AI score needed for an alert (an insider/company
 X_TRADE_MAX_PUMP = 5          # the agent ignores posts the AI rates as hype above this
 X_AI_PER_HOUR = 30            # AI reads of posts per hour (the free Gemini quota also serves the news)
 X_HOME_OP = "GjleyyGw4xvWe5tn8EQt9w/HomeLatestTimeline"   # X web op id of the Following feed (from his Chrome, 4.11)
+XCHAN_EVERY_SEC = 60          # Telegram channel "X OTC Updates" (bot/xchan.py)
+XCHAN_AI_PER_HOUR = 15        # its own AI budget, so it cannot use up the X feed's
+XCHAN_LOW_QUIET_H = 2         # an account whose post about a stock was unimportant is not read again for 2 hours
 X_FOLLOW_PER_DAY = 40         # the bot account follows Sean's accounts slowly (fast follows get accounts locked)
 X_FOLLOW_GAP_SEC = 1200       # at least 20-40 min between two follows
 

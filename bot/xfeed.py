@@ -196,13 +196,13 @@ def on_post(run, x, t):
     return len(syms)
 
 
-def alert(st, sym, post, a, t, agent):
+def alert(st, sym, post, a, t, agent, via=""):
     price = market.price([sym])
     chg, vol, avg = group._day_stats(sym)
     head = f"🐦 <b>{esc(sym)}</b>"
     if price:
         head += f" · ${fmt_price(price)}" + (f" ({chg:+.0f}% היום)" if chg is not None else "")
-    lines = [head + " · ציוץ בטוויטר",
+    lines = [head + " · ציוץ בטוויטר" + (f" ({esc(via)})" if via else ""),
              f"<b>{esc(post['name'])}</b> (@{esc(post['handle'])}) · {il_time(t.date.timestamp())}"]
     if a:
         lines[-1] += f" · {ROLE_HE.get(a['role'], '👤')} {esc(a['role_he'])}"

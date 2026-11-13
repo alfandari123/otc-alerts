@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-from . import ai, atm_trader, config, deal, demotion, dilution, group, inbox, market, radar, rules, schwab, state, telegram, trader, xfeed
+from . import ai, atm_trader, config, deal, demotion, dilution, group, inbox, market, radar, rules, schwab, state, telegram, trader, xchan, xfeed
 from .net import short_err
 from .sources import finra, otcm, prnews, sec
 from .util import esc, et_now, fmt_price, il_time, log
@@ -754,6 +754,10 @@ def cycle(st, args):
             xfeed.cycle(run)
         except Exception as e:
             log(f"x: FAILED ({short_err(e)})")
+        try:
+            xchan.cycle(run)
+        except Exception as e:
+            log(f"xchan: FAILED ({short_err(e)})")
         if market.stats["ok"] or market.stats["fail"]:
             set_health(st, "Yahoo", None if market.stats["ok"] else market.stats["err"])
         if config.GEMINI_API_KEY:   # a one-off timeout is not an outage; only a bad key / used-up quota is
