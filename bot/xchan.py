@@ -108,17 +108,24 @@ def on_message(run, c, text, ts):
     if not a:
         return len(syms)
     c["ai"].append(now)
-    if a["score"] < config.X_ALERT_MIN_SCORE and not a["early"]:
+    x = xfeed.init(st)
+    vip = p["handle"].lower() in {h.lower() for h in x["users"]} | {"seantwizer"}
+    company = a["role"] in ("insider", "company")
+    dil = a.get("dilution", 0) >= config.X_DILUTION_MIN
+    # his rule 16.11: only important posts - the company itself saying something that can lift the stock or hints at
+    # dilution, an account from Sean's list unless it is noise, anyone else only with a strong / early post
+    if not (a["score"] >= config.X_ALERT_MIN_SCORE or a["early"]
+            or (company and (a["score"] >= config.XCHAN_COMPANY_MIN_SCORE or dil))
+            or (vip and (a["score"] >= config.XCHAN_VIP_MIN_SCORE or dil))):
         for k in keys:
             c["low"][k] = now
         return len(syms)
-    x = xfeed.init(st)
     t = SimpleNamespace(date=SimpleNamespace(timestamp=lambda: ts), url=p["url"])
     for sym in syms:
         agent = ""
-        if a["score"] >= config.TRADE_MIN_SCORE and a["pump"] <= config.X_TRADE_MAX_PUMP:
+        if a["score"] >= config.TRADE_MIN_SCORE and a["pump"] <= config.X_TRADE_MAX_PUMP and not dil:
             agent = trader.on_group(st, sym, f"🐦 ציוץ – @{p['handle']}", ts)
         if not x["off"] and now - x["alerted"].get(sym, 0) >= config.GROUP_REALERT_H * 3600:
-            if run.notify(xfeed.alert(st, sym, post, a, t, agent, via="ערוץ X OTC Updates")):
+            if run.notify(xfeed.alert(st, sym, post, a, t, agent, via="ערוץ X OTC Updates" + (" · ⭐ ברשימה של שון" if vip else ""))):
                 x["alerted"][sym] = now
     return len(syms)

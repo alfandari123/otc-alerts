@@ -188,7 +188,7 @@ def on_post(run, x, t):
         return len(syms)
     for sym in syms:
         agent = ""
-        if a and a["score"] >= config.TRADE_MIN_SCORE and a["pump"] <= config.X_TRADE_MAX_PUMP:
+        if a and a["score"] >= config.TRADE_MIN_SCORE and a["pump"] <= config.X_TRADE_MAX_PUMP                 and a.get("dilution", 0) < config.X_DILUTION_MIN:
             agent = trader.on_group(run.st, sym, f"🐦 ציוץ – @{u.username}", ts)
         if not x["off"] and time.time() - x["alerted"].get(sym, 0) >= config.GROUP_REALERT_H * 3600:
             if run.notify(alert(run.st, sym, post, a, t, agent)):
@@ -211,6 +211,8 @@ def alert(st, sym, post, a, t, agent, via=""):
             tags.append("🎯 מידע מוקדם")
         if a["pump"] >= 6:
             tags.append(f"🚨 סימני פאמפ {a['pump']}/10")
+        if a.get("dilution", 0) >= config.X_DILUTION_MIN:
+            tags.append(f"🩸 סימן לדילול {a['dilution']}/10")
         lines.append(" · ".join(tags))
         if a["summary_he"]:
             lines.append(esc(a["summary_he"]))

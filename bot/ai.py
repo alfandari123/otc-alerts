@@ -73,6 +73,9 @@ Answer ONLY with JSON:
           (1 = noise/irrelevant, 5 = minor, 7 = concrete early information, 9-10 = major catalyst confirmed by an insider),
  "pump": integer 0-10, how much this looks like hype / manipulation for a quick profit,
  "early": true if it holds concrete information that is probably not in the news yet, else false,
+ "dilution": integer 0-10, how strongly the post hints that the company will issue NEW shares soon (an offering,
+          financing / funding, convertible notes, a toxic lender, raising the authorized shares, S-1 / Reg A,
+          "capital raise"); 0 = no hint,
  "summary_he": "1-2 short, simple Hebrew sentences: what the post says and why it matters",
  "risk_he": "short Hebrew note on red flags (pump signs, paid promotion, dilution hints); empty string if none"
 }}
@@ -229,6 +232,7 @@ def _parse_tweet(r):
             "score": max(1, min(10, int(float(d.get("score", 1))))),
             "pump": max(0, min(10, int(float(d.get("pump", 0))))),
             "early": bool(d.get("early")),
+            "dilution": max(0, min(10, int(float(d.get("dilution", 0) or 0)))),
             "summary_he": str(d.get("summary_he", ""))[:500],
             "risk_he": str(d.get("risk_he", ""))[:300],
         }
